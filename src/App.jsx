@@ -12,9 +12,10 @@ import {
   onSnapshot, 
   setDoc, 
   updateDoc, 
-  getDoc 
+  getDoc,
+  deleteDoc
 } from 'firebase/firestore';
-import { RotateCw, FlipHorizontal, Check, Users, AlertCircle, Play, SkipForward, LogOut, RotateCcw } from 'lucide-react';
+import { RotateCw, FlipHorizontal, Check, Users, AlertCircle, Play, SkipForward, LogOut, RotateCcw, Flag, Trash2, ShieldAlert } from 'lucide-react';
 
 // --- 您專屬的 Firebase 設定 ---
 const firebaseConfig = {
@@ -31,30 +32,13 @@ const BOARD_SIZE = 20;
 
 // 定義 21 個標準 Blokus 棋子的形狀
 const PIECE_SHAPES_STR = [
-  ["X"], // 1
-  ["XX"], // 2
-  ["XXX"], // 3
-  ["XX", "X "], // 4
-  ["XXXX"], // 5
-  ["XXX", "X  "], // 6
-  ["XXX", " X "], // 7
-  ["XX", "XX"], // 8
-  ["XX ", " XX"], // 9
-  ["XXXXX"], // 10
-  ["XXXX", "X   "], // 11
-  ["XXXX", " X  "], // 12
-  ["XXX", "XX "], // 13
-  ["XXX", "X X"], // 14
-  ["XXX", "X  ", "X  "], // 15
-  ["XX ", " XX", "  X"], // 16
-  [" XX", "XX ", " X "], // 17
-  ["XX ", " X ", " XX"], // 18
-  ["XXX", " X ", " X "], // 19
-  [" X ", "XXX", " X "], // 20
-  ["XXX ", "  XX"] // 21
+  ["X"], ["XX"], ["XXX"], ["XX", "X "], ["XXXX"], 
+  ["XXX", "X  "], ["XXX", " X "], ["XX", "XX"], ["XX ", " XX"], ["XXXXX"], 
+  ["XXXX", "X   "], ["XXXX", " X  "], ["XXX", "XX "], ["XXX", "X X"], ["XXX", "X  ", "X  "], 
+  ["XX ", " XX", "  X"], [" XX", "XX ", " X "], ["XX ", " X ", " XX"], ["XXX", " X ", " X "], [" X ", "XXX", " X "], 
+  ["XXX ", "  XX"]
 ];
 
-// 將字串形狀轉換為座標陣列 [y, x]
 const INITIAL_PIECES = PIECE_SHAPES_STR.map(shape => {
   const coords = [];
   shape.forEach((row, y) => {
@@ -127,7 +111,6 @@ function validateMove(board, playerIndex, pieceCoords, startY, startX) {
   return hasCornerTouch;
 }
 
-// 繪製迷你的棋子圖示 (加入 3D CSS class)
 const MiniPiece = ({ coords, colorClass, onClick, isSelected }) => {
   const maxY = Math.max(...coords.map(c => c[0]));
   const maxX = Math.max(...coords.map(c => c[1]));
@@ -165,12 +148,15 @@ export default function App() {
   
   const [roomId, setRoomId] = useState('');
   const [roomData, setRoomData] = useState(null);
+  const [roomsList, setRoomsList] = useState([]);
   const [userName, setUserName] = useState('');
   const [view, setView] = useState('home');
 
   const [selectedPieceIndex, setSelectedPieceIndex] = useState(null);
   const [transform, setTransform] = useState({ rot: 0, flipX: false });
   const [stagingPos, setStagingPos] = useState(null);
+  const [confirmSurrender, setConfirmSurrender] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   // 初始化 Firebase
   useEffect(() => {
@@ -181,7 +167,6 @@ export default function App() {
         const firestore = getFirestore(app);
         setDb(firestore);
 
-        // 強制使用匿名登入，避免跨專案 Custom Token 衝突
         await signInAnonymously(auth);
 
         onAuthStateChanged(auth, (u) => {
@@ -197,7 +182,24 @@ export default function App() {
     initFirebase();
   }, []);
 
-  // 監聽房間資料
+  // 監聽所有房間列表 (用於首頁大廳)
+  useEffect(() => {
+    if (!db || view !== 'home') return;
+    const roomsRef = collection(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms');
+    const unsubscribe = onSnapshot(roomsRef, (snapshot) => {
+      const list = [];
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        list.push({ id: doc.id, ...data });
+      });
+      // 依據建立時間排序，新的在前面
+      list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      setRoomsList(list);
+    });
+    return () => unsubscribe();
+  }, [db, view, appId]);
+
+  // 監聽單一房間資料
   useEffect(() => {
     if (!user || !db || !roomId || view === 'home') return;
 
@@ -205,13 +207,13 @@ export default function App() {
     const unsubscribe = onSnapshot(roomRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.data();
-        // 解析 JSON 字串為陣列
         if (data.board && typeof data.board === 'string') data.board = JSON.parse(data.board);
         if (data.piecesLeft && typeof data.piecesLeft === 'string') data.piecesLeft = JSON.parse(data.piecesLeft);
+        if (!data.surrendered) data.surrendered = [false, false, false, false];
         setRoomData(data);
       } else {
         setRoomData(null);
-        if (view !== 'home') setView('home'); // 房間被刪除時回到首頁
+        if (view !== 'home') setView('home'); 
       }
     }, (err) => {
       console.error("讀取房間資料失敗:", err);
@@ -220,23 +222,61 @@ export default function App() {
     return () => unsubscribe();
   }, [user, db, roomId, view, appId]);
 
+  // 同步房間狀態到視圖 (修復重新開始沒反應的問題)
+  useEffect(() => {
+    if (!roomData) return;
+    // 如果房間回到大廳狀態，且目前在遊戲畫面，則強制切回大廳
+    if (roomData.status === 'lobby' && view === 'game') {
+      setView('lobby');
+    } 
+    // 如果房間開始遊戲，且目前在大廳，則強制切回遊戲
+    else if (roomData.status === 'playing' && view === 'lobby') {
+      setView('game');
+    }
+  }, [roomData?.status, view]);
+
+  // 自動跳過已投降的玩家回合
+  useEffect(() => {
+    if (!roomData || roomData.status !== 'playing' || !db || !roomId) return;
+    
+    // 只有房主負責執行自動跳過，避免多個客戶端重複發送更新
+    if (roomData.host === user?.uid) {
+      const currentSlot = roomData.currentTurn;
+      if (roomData.surrendered && roomData.surrendered[currentSlot]) {
+        const timer = setTimeout(async () => {
+          const newPassCount = roomData.passCount + 1;
+          const nextStatus = newPassCount >= 4 ? 'finished' : 'playing';
+          
+          const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
+          await updateDoc(roomRef, {
+            currentTurn: (currentSlot + 1) % 4,
+            passCount: newPassCount,
+            status: nextStatus
+          });
+        }, 800); // 稍微延遲，讓畫面能看出輪轉
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [roomData?.currentTurn, roomData?.status, roomData?.surrendered, roomData?.host, user?.uid, db, roomId, appId]);
+
   // 重置本地選擇狀態
   useEffect(() => {
     setSelectedPieceIndex(null);
     setStagingPos(null);
     setTransform({ rot: 0, flipX: false });
+    setConfirmSurrender(false);
   }, [roomData?.currentTurn]);
 
 
   // 建立/加入房間
-  const handleJoinOrCreate = async () => {
-    if (!roomId.trim() || !user) return;
+  const handleJoinOrCreate = async (targetRoomId) => {
+    const idToUse = targetRoomId || roomId;
+    if (!idToUse.trim() || !user) return;
     
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', idToUse.toUpperCase());
     const snapshot = await getDoc(roomRef);
 
     if (!snapshot.exists()) {
-      // 創建新房間時，將多維陣列轉換為 JSON 字串
       const initialBoard = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(null));
       const initialPieces = Array(4).fill().map(() => Array.from({ length: 21 }, (_, i) => i));
 
@@ -248,11 +288,23 @@ export default function App() {
         currentTurn: 0,
         piecesLeft: JSON.stringify(initialPieces),
         passCount: 0,
+        surrendered: [false, false, false, false],
         createdAt: Date.now()
       };
       await setDoc(roomRef, newRoom);
     }
+    setRoomId(idToUse.toUpperCase());
     setView('lobby');
+  };
+
+  // 管理員清除所有房間
+  const handleAdminClearAll = async () => {
+    if (!isAdmin || !db) return;
+    if (window.confirm("確定要清除伺服器上所有的房間嗎？這將會中斷正在進行的遊戲。")) {
+      for (const room of roomsList) {
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', room.id));
+      }
+    }
   };
 
   // 離開房間
@@ -273,22 +325,20 @@ export default function App() {
       board: JSON.stringify(initialBoard),
       currentTurn: 0,
       piecesLeft: JSON.stringify(initialPieces),
-      passCount: 0
+      passCount: 0,
+      surrendered: [false, false, false, false]
     });
-    setView('lobby');
   };
 
-  // 佔領顏色槽位
+  // 佔領/離開顏色槽位
   const handleClaimSlot = async (slotIndex) => {
     if (!roomData || roomData.status !== 'lobby') return;
     const newSlots = [...roomData.slots];
     newSlots[slotIndex] = { uid: user.uid, name: userName };
-    
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
     await updateDoc(roomRef, { slots: newSlots });
   };
 
-  // 離開顏色槽位
   const handleLeaveSlot = async (slotIndex) => {
     if (!roomData || roomData.status !== 'lobby') return;
     const newSlots = [...roomData.slots];
@@ -309,40 +359,36 @@ export default function App() {
     await updateDoc(roomRef, { 
       status: 'playing',
       currentTurn: 0,
-      passCount: 0
+      passCount: 0,
+      surrendered: [false, false, false, false]
     });
-    setView('game');
   };
 
   // 當前玩家與回合判斷
   const isMyTurn = roomData && 
                    roomData.status === 'playing' && 
-                   roomData.slots[roomData.currentTurn]?.uid === user?.uid;
+                   roomData.slots[roomData.currentTurn]?.uid === user?.uid &&
+                   !(roomData.surrendered && roomData.surrendered[roomData.currentTurn]);
   const currentColor = roomData?.currentTurn ?? 0;
 
-  // 計算變換後的棋子座標
   const activePieceCoords = useMemo(() => {
     if (selectedPieceIndex === null) return [];
     return transformPiece(INITIAL_PIECES[selectedPieceIndex], transform.rot, transform.flipX);
   }, [selectedPieceIndex, transform]);
 
-  // 判斷暫存位置是否合法
   const isMoveValid = useMemo(() => {
     if (!stagingPos || !roomData || selectedPieceIndex === null) return false;
     return validateMove(roomData.board, currentColor, activePieceCoords, stagingPos.y, stagingPos.x);
   }, [stagingPos, roomData, activePieceCoords, currentColor, selectedPieceIndex]);
 
-  // 點擊棋盤
   const handleBoardClick = (y, x) => {
     if (!isMyTurn || selectedPieceIndex === null) return;
     setStagingPos({ y, x });
   };
 
-  // 確認放置
   const handleConfirmMove = async () => {
     if (!isMyTurn || !isMoveValid || !stagingPos || selectedPieceIndex === null) return;
 
-    // 深拷貝並應用變更
     const newBoard = roomData.board.map(row => [...row]);
     activePieceCoords.forEach(([dy, dx]) => {
       newBoard[stagingPos.y + dy][stagingPos.x + dx] = currentColor;
@@ -351,26 +397,21 @@ export default function App() {
     const newPiecesLeft = roomData.piecesLeft.map(arr => [...arr]);
     newPiecesLeft[currentColor] = newPiecesLeft[currentColor].filter(idx => idx !== selectedPieceIndex);
 
-    let nextTurn = (currentColor + 1) % 4;
-    
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
     await updateDoc(roomRef, {
       board: JSON.stringify(newBoard),
       piecesLeft: JSON.stringify(newPiecesLeft),
-      currentTurn: nextTurn,
+      currentTurn: (currentColor + 1) % 4,
       passCount: 0
     });
   };
 
-  // 跳過回合
   const handlePassTurn = async () => {
     if (!isMyTurn) return;
     
     const newPassCount = roomData.passCount + 1;
     let nextStatus = roomData.status;
-    if (newPassCount >= 4) {
-      nextStatus = 'finished';
-    }
+    if (newPassCount >= 4) nextStatus = 'finished';
 
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
     await updateDoc(roomRef, {
@@ -380,7 +421,29 @@ export default function App() {
     });
   };
 
-  // 計算分數
+  const handleSurrender = async () => {
+    if (!isMyTurn) return;
+    if (!confirmSurrender) {
+      setConfirmSurrender(true);
+      return;
+    }
+    
+    const newSurrendered = roomData.surrendered ? [...roomData.surrendered] : [false, false, false, false];
+    newSurrendered[currentColor] = true;
+    
+    const newPassCount = roomData.passCount + 1;
+    let nextStatus = roomData.status;
+    if (newPassCount >= 4) nextStatus = 'finished';
+
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
+    await updateDoc(roomRef, {
+      surrendered: newSurrendered,
+      currentTurn: (currentColor + 1) % 4,
+      passCount: newPassCount,
+      status: nextStatus
+    });
+  };
+
   const calculateScores = () => {
     if (!roomData || !roomData.piecesLeft) return [];
     return roomData.piecesLeft.map(pieces => {
@@ -401,44 +464,113 @@ export default function App() {
 
   if (view === 'home') {
     return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 font-sans text-white">
-        <div className="bg-slate-800 p-8 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] max-w-md w-full border border-slate-700">
-          <div className="text-center mb-8">
-            <h1 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 mb-2 tracking-tight">角鬥士棋 3D版</h1>
-            <p className="text-slate-400">連線 2-4 人對戰</p>
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center py-10 px-4 font-sans text-white overflow-y-auto">
+        <div className="text-center mb-8">
+          <h1 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 mb-2 tracking-tight">角鬥士棋 3D版</h1>
+          <p className="text-slate-400">多人線上連線對戰</p>
+        </div>
+
+        <div className="w-full max-w-4xl grid md:grid-cols-2 gap-6">
+          {/* 左側：加入/建立房間 */}
+          <div className="bg-slate-800 p-8 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-slate-700 h-fit">
+            <h2 className="text-2xl font-bold mb-6 text-indigo-300">加入或創建房間</h2>
+            <div className="space-y-5">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1">您的玩家名稱</label>
+                <input 
+                  type="text" 
+                  value={userName} 
+                  onChange={(e) => setUserName(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition text-white"
+                  placeholder="輸入您的名稱"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1">輸入房間號碼</label>
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    value={roomId} 
+                    onChange={(e) => setRoomId(e.target.value.toUpperCase())}
+                    className="flex-1 px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition font-mono uppercase text-white tracking-widest text-lg"
+                    placeholder="例如: ROOM123"
+                  />
+                  <button 
+                    onClick={() => handleJoinOrCreate(roomId)}
+                    disabled={!roomId.trim() || !userName.trim()}
+                    className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold px-6 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shrink-0"
+                  >
+                    進入
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
-          
-          <div className="space-y-5">
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1">您的玩家名稱</label>
-              <input 
-                type="text" 
-                value={userName} 
-                onChange={(e) => setUserName(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition text-white"
-                placeholder="輸入您的名稱"
-              />
+
+          {/* 右側：公開房間列表 */}
+          <div className="bg-slate-800 p-6 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-slate-700 flex flex-col h-[400px]">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold text-slate-200">公開房間列表</h2>
+              <div className="text-xs bg-slate-700 px-2 py-1 rounded text-slate-300">共 {roomsList.length} 個</div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1">房間號碼</label>
-              <input 
-                type="text" 
-                value={roomId} 
-                onChange={(e) => setRoomId(e.target.value.toUpperCase())}
-                className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition font-mono uppercase text-white tracking-widest text-lg"
-                placeholder="例如: ROOM123"
-              />
+            
+            <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-3">
+              {roomsList.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-slate-500">
+                  <div className="text-4xl mb-2">👻</div>
+                  <p>目前沒有房間，趕快建立一個吧！</p>
+                </div>
+              ) : (
+                roomsList.map(room => (
+                  <div key={room.id} className="bg-slate-900/80 border border-slate-700 p-3 rounded-xl flex justify-between items-center hover:border-indigo-500 transition group">
+                    <div>
+                      <div className="font-mono text-lg font-bold text-indigo-300">{room.id}</div>
+                      <div className="text-xs text-slate-400 mt-1 flex gap-2">
+                        <span>狀態: {room.status === 'playing' ? <span className="text-yellow-500">遊戲中</span> : <span className="text-green-500">等待中</span>}</span>
+                        <span>| 人數: {room.slots ? room.slots.filter(s => s !== null).length : 0}/4</span>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => handleJoinOrCreate(room.id)}
+                      disabled={!userName.trim()}
+                      className="bg-slate-700 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-bold transition disabled:opacity-50"
+                    >
+                      加入
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
-            <button 
-              onClick={handleJoinOrCreate}
-              disabled={!roomId.trim() || !userName.trim()}
-              className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold py-3 px-4 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2 shadow-lg"
-            >
-              <Users size={20} />
-              進入遊戲大廳
-            </button>
           </div>
         </div>
+
+        {/* 底部隱藏的管理員功能 */}
+        <div className="mt-12 flex flex-col items-center gap-4">
+          <button onClick={() => setIsAdmin(!isAdmin)} className="text-slate-700 hover:text-slate-500 transition">
+            <ShieldAlert size={20} />
+          </button>
+          
+          {isAdmin && (
+            <div className="bg-red-900/30 border border-red-800 p-4 rounded-xl flex flex-col items-center gap-3">
+              <span className="text-red-400 font-bold text-sm">⚠️ 管理員模式已開啟</span>
+              <button 
+                onClick={handleAdminClearAll}
+                disabled={roomsList.length === 0}
+                className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition disabled:opacity-50 disabled:grayscale"
+              >
+                <Trash2 size={16} />
+                清除伺服器上所有房間
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* 全域 CSS */}
+        <style dangerouslySetInnerHTML={{__html: `
+          .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+          .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+          .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        `}} />
       </div>
     );
   }
@@ -451,7 +583,7 @@ export default function App() {
       <div className="min-h-screen bg-slate-900 flex flex-col items-center p-4 sm:p-8 font-sans text-slate-100">
         <div className="bg-slate-800 p-6 sm:p-8 rounded-2xl shadow-2xl max-w-2xl w-full border border-slate-700">
           <div className="flex justify-between items-center mb-8 border-b border-slate-700 pb-4">
-            <h2 className="text-2xl font-bold">房間: <span className="font-mono text-indigo-400">{roomId}</span></h2>
+            <h2 className="text-2xl font-bold">遊戲大廳: <span className="font-mono text-indigo-400">{roomId}</span></h2>
             <button onClick={handleLeaveRoom} className="flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 rounded-lg transition">
               <LogOut size={16} /> 離開房間
             </button>
@@ -460,8 +592,8 @@ export default function App() {
           <div className="mb-6 bg-blue-900/40 border border-blue-800 p-4 rounded-lg flex items-start gap-3">
             <AlertCircle className="text-blue-400 shrink-0 mt-0.5" size={20} />
             <div className="text-sm text-blue-200">
-              <p>需要 4 個顏色都準備好才能開始。</p>
-              <p>若為 2 人遊玩，每人可以點擊「加入」佔領 2 個顏色 (建議選擇對角線顏色，如紅+黃)。</p>
+              <p>需要 4 個顏色都有人佔領才能開始。</p>
+              <p>若為 2 人遊玩，每人可點擊佔領 2 個顏色 (建議選擇對角線顏色，如紅+黃)。</p>
             </div>
           </div>
 
@@ -508,8 +640,8 @@ export default function App() {
                   <Play fill="currentColor" size={20} />
                   開始遊戲
                 </button>
-                <button onClick={handleRestartRoom} className="text-sm text-slate-400 hover:text-white flex items-center gap-1">
-                  <RotateCcw size={14} /> 清除/重置房間狀態
+                <button onClick={handleRestartRoom} className="text-sm text-slate-400 hover:text-white flex items-center gap-1 mt-4">
+                  <RotateCcw size={14} /> 重置房間狀態
                 </button>
               </>
             ) : (
@@ -540,9 +672,9 @@ export default function App() {
             border: 1px solid rgba(0,0,0,0.1);
           }
           .cell-empty {
-            background-color: #334155; /* slate-700 */
+            background-color: #334155; 
             box-shadow: inset 1px 1px 4px rgba(0,0,0,0.4);
-            border: 1px solid #1e293b; /* slate-800 */
+            border: 1px solid #1e293b;
           }
           .cell-invalid {
             background: repeating-linear-gradient(45deg, #ef4444, #ef4444 8px, #991b1b 8px, #991b1b 16px);
@@ -591,14 +723,19 @@ export default function App() {
             {COLORS.map((c, idx) => {
               const slot = roomData.slots[idx];
               const isActive = roomData.currentTurn === idx && !isFinished;
+              const hasSurrendered = roomData.surrendered && roomData.surrendered[idx];
+              
               return (
-                <div key={idx} className={`p-2 sm:p-3 rounded-xl border-2 flex-shrink-0 lg:flex-shrink flex lg:flex-col items-center lg:items-start gap-1 sm:gap-2 transition-all ${isActive ? `${c.border} bg-slate-700 shadow-[0_0_15px_rgba(255,255,255,0.15)] scale-105` : 'border-slate-700 bg-slate-900/50 opacity-60'}`}>
+                <div key={idx} className={`p-2 sm:p-3 rounded-xl border-2 flex-shrink-0 lg:flex-shrink flex lg:flex-col items-center lg:items-start gap-1 sm:gap-2 transition-all ${isActive ? `${c.border} bg-slate-700 shadow-[0_0_15px_rgba(255,255,255,0.15)] scale-105` : hasSurrendered ? 'border-slate-800 bg-slate-900 opacity-40 grayscale' : 'border-slate-700 bg-slate-900/50 opacity-60'}`}>
                   <div className="flex items-center gap-2">
                     <div className={`w-3 h-3 sm:w-4 sm:h-4 rounded ${c.bg} piece-3d`}></div>
-                    <span className="font-bold text-xs sm:text-sm truncate max-w-[80px] lg:max-w-[120px]">{slot?.name || '無人'}</span>
+                    <span className={`font-bold text-xs sm:text-sm truncate max-w-[80px] lg:max-w-[120px] ${hasSurrendered ? 'line-through' : ''}`}>{slot?.name || '無人'}</span>
                   </div>
-                  <div className="text-[10px] sm:text-xs text-slate-400 font-mono bg-slate-900 px-2 py-0.5 rounded-full">
-                    剩餘: {roomData.piecesLeft[idx]?.length || 0}
+                  <div className="flex items-center gap-2">
+                    <div className="text-[10px] sm:text-xs text-slate-400 font-mono bg-slate-900 px-2 py-0.5 rounded-full">
+                      剩餘: {roomData.piecesLeft[idx]?.length || 0}
+                    </div>
+                    {hasSurrendered && <span className="text-[10px] text-red-500 font-bold border border-red-500 px-1 rounded">投降</span>}
                   </div>
                 </div>
               );
@@ -614,8 +751,12 @@ export default function App() {
                   <h2 className="text-3xl font-black text-yellow-500 mb-6">遊戲結束！</h2>
                   <div className="space-y-3 mb-6">
                     {scores.map((score, idx) => (
-                      <div key={idx} className="flex justify-between items-center text-lg bg-slate-900 p-2 rounded-lg border border-slate-700">
-                        <span className="flex items-center gap-2"><div className={`w-4 h-4 rounded piece-3d ${COLORS[idx].bg}`}></div> <span className="font-bold">{COLORS[idx].name}</span></span>
+                      <div key={idx} className={`flex justify-between items-center text-lg bg-slate-900 p-2 rounded-lg border border-slate-700 ${(roomData.surrendered && roomData.surrendered[idx]) ? 'opacity-60' : ''}`}>
+                        <span className="flex items-center gap-2">
+                          <div className={`w-4 h-4 rounded piece-3d ${COLORS[idx].bg}`}></div> 
+                          <span className="font-bold">{COLORS[idx].name}</span>
+                          {(roomData.surrendered && roomData.surrendered[idx]) && <span className="text-xs text-red-500 ml-1">(投降)</span>}
+                        </span>
                         <span className="font-mono font-bold text-xl">{score} 分</span>
                       </div>
                     ))}
@@ -625,11 +766,11 @@ export default function App() {
                   <div className="flex flex-col gap-3">
                     {isHost && (
                       <button onClick={handleRestartRoom} className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg piece-3d w-full">
-                        再來一局
+                        返回大廳 (重新開始)
                       </button>
                     )}
                     <button onClick={handleLeaveRoom} className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-6 rounded-xl w-full">
-                      返回大廳
+                      離開房間
                     </button>
                   </div>
                 </div>
@@ -659,8 +800,8 @@ export default function App() {
                         }
                       }
 
-                      // 決定格子的 CSS 樣式
                       let cellClasses = "cell-empty"; 
+                      let innerElement = null;
                       
                       if (cellOwner !== null) {
                         cellClasses = `piece-3d ${COLORS[cellOwner].bg}`;
@@ -668,35 +809,36 @@ export default function App() {
                         if (hoverValid) {
                           cellClasses = `piece-3d ${COLORS[currentColor].bg} opacity-70 scale-95 transition-transform`;
                         } else {
-                          // 強烈違規顏色提示
                           cellClasses = `cell-invalid scale-110`;
                         }
                       } else {
-                        // 標記角落起點
-                        if (y === 0 && x === 0) cellClasses += " shadow-[inset_6px_6px_0_rgba(239,68,68,0.4)]";
-                        else if (y === 0 && x === 19) cellClasses += " shadow-[inset_-6px_6px_0_rgba(59,130,246,0.4)]";
-                        else if (y === 19 && x === 19) cellClasses += " shadow-[inset_-6px_-6px_0_rgba(234,179,8,0.4)]";
-                        else if (y === 19 && x === 0) cellClasses += " shadow-[inset_6px_-6px_0_rgba(34,197,94,0.4)]";
+                        // 在四個角落顯示起始顏色的圓點標示
+                        if (y === 0 && x === 0) innerElement = <div className="w-1/2 h-1/2 rounded-full bg-red-500/60 shadow-[0_0_10px_rgba(239,68,68,0.8)] animate-pulse" />;
+                        else if (y === 0 && x === 19) innerElement = <div className="w-1/2 h-1/2 rounded-full bg-blue-500/60 shadow-[0_0_10px_rgba(59,130,246,0.8)] animate-pulse" />;
+                        else if (y === 19 && x === 19) innerElement = <div className="w-1/2 h-1/2 rounded-full bg-yellow-500/60 shadow-[0_0_10px_rgba(234,179,8,0.8)] animate-pulse" />;
+                        else if (y === 19 && x === 0) innerElement = <div className="w-1/2 h-1/2 rounded-full bg-green-500/60 shadow-[0_0_10px_rgba(34,197,94,0.8)] animate-pulse" />;
                       }
 
                       return (
                         <div 
                           key={`${y}-${x}`}
-                          className={`w-full h-full rounded-[1px] ${cellClasses} cursor-pointer`}
+                          className={`w-full h-full rounded-[1px] ${cellClasses} cursor-pointer flex items-center justify-center`}
                           onClick={() => handleBoardClick(y, x)}
                           onMouseEnter={() => {
                             if (isMyTurn && selectedPieceIndex !== null && window.matchMedia('(hover: hover)').matches) {
                               setStagingPos({y, x});
                             }
                           }}
-                        />
+                        >
+                          {innerElement}
+                        </div>
                       );
                     })
                   )}
                 </div>
               </div>
 
-              {/* 確認放置按鈕 (覆蓋在棋盤上方) */}
+              {/* 確認放置按鈕 */}
               {isMyTurn && stagingPos && selectedPieceIndex !== null && (
                 <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none w-full flex justify-center">
                   <button
@@ -713,21 +855,32 @@ export default function App() {
           </div>
           
           {/* 右側/底部：當前回合玩家的操作與棋子庫 */}
-          <div className="h-48 lg:h-auto lg:w-80 bg-slate-800 p-3 shadow-[0_-10px_20px_rgba(0,0,0,0.3)] flex flex-col z-20 shrink-0 border-t lg:border-t-0 lg:border-l border-slate-700">
+          <div className="h-[220px] lg:h-auto lg:w-80 bg-slate-800 p-3 shadow-[0_-10px_20px_rgba(0,0,0,0.3)] flex flex-col z-20 shrink-0 border-t lg:border-t-0 lg:border-l border-slate-700">
             {!isFinished ? (
               isMyTurn ? (
                 <>
                   <div className="flex justify-between items-center mb-2 shrink-0">
                     <h3 className="font-bold text-sm sm:text-base text-white flex items-center gap-2">
                       <div className={`w-3 h-3 rounded-full ${COLORS[currentColor].bg} piece-3d`}></div>
-                      點選形狀並翻轉
+                      你的回合
                     </h3>
-                    <button 
-                      onClick={handlePassTurn}
-                      className="text-xs sm:text-sm flex items-center gap-1 bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg border border-slate-600 shadow-sm"
-                    >
-                      <SkipForward size={14} /> 放棄回合
-                    </button>
+                    <div className="flex gap-2">
+                      {/* 投降按鈕 */}
+                      <button 
+                        onClick={handleSurrender}
+                        className={`text-xs flex items-center gap-1 px-3 py-1.5 rounded-lg border shadow-sm transition ${confirmSurrender ? 'bg-red-600 border-red-500 text-white font-bold animate-pulse' : 'bg-slate-800 border-red-900 text-red-400 hover:bg-slate-700'}`}
+                      >
+                        <Flag size={14} /> {confirmSurrender ? '確定投降?' : '投降'}
+                      </button>
+                      
+                      {/* 放棄回合按鈕 */}
+                      <button 
+                        onClick={handlePassTurn}
+                        className="text-xs flex items-center gap-1 bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg border border-slate-600 shadow-sm transition"
+                      >
+                        <SkipForward size={14} /> 略過回合
+                      </button>
+                    </div>
                   </div>
                   
                   {/* 控制區 */}
