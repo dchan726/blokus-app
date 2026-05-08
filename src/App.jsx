@@ -15,7 +15,11 @@ import {
   getDoc,
   deleteDoc
 } from 'firebase/firestore';
-import { RotateCw, FlipHorizontal, Check, Users, AlertCircle, Play, SkipForward, LogOut, RotateCcw, Flag, Trash2, ShieldAlert } from 'lucide-react';
+import { 
+  RotateCw, FlipHorizontal, Check, Users, AlertCircle, Play, 
+  SkipForward, LogOut, RotateCcw, Flag, Trash2, ShieldAlert,
+  Vibrate, VibrateOff, StopCircle, Trophy
+} from 'lucide-react';
 
 // --- 您專屬的 Firebase 設定 ---
 const firebaseConfig = {
@@ -30,7 +34,6 @@ const firebaseConfig = {
 // --- 遊戲常數與設定 ---
 const BOARD_SIZE = 20;
 
-// 定義 21 個標準 Blokus 棋子的形狀
 const PIECE_SHAPES_STR = [
   ["X"], ["XX"], ["XXX"], ["XX", "X "], ["XXXX"], 
   ["XXX", "X  "], ["XXX", " X "], ["XX", "XX"], ["XX ", " XX"], ["XXXXX"], 
@@ -157,6 +160,7 @@ export default function App() {
   const [stagingPos, setStagingPos] = useState(null);
   const [confirmSurrender, setConfirmSurrender] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [vibrationEnabled, setVibrationEnabled] = useState(false); 
 
   // 初始化 Firebase
   useEffect(() => {
@@ -182,7 +186,7 @@ export default function App() {
     initFirebase();
   }, []);
 
-  // 監聽所有房間列表 (用於首頁大廳)
+  // 監聽所有房間列表
   useEffect(() => {
     if (!db || view !== 'home') return;
     const roomsRef = collection(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms');
@@ -192,7 +196,6 @@ export default function App() {
         const data = doc.data();
         list.push({ id: doc.id, ...data });
       });
-      // 依據建立時間排序，新的在前面
       list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       setRoomsList(list);
     });
@@ -222,14 +225,12 @@ export default function App() {
     return () => unsubscribe();
   }, [user, db, roomId, view, appId]);
 
-  // 同步房間狀態到視圖 (修復重新開始沒反應的問題)
+  // 同步房間狀態到視圖
   useEffect(() => {
     if (!roomData) return;
-    // 如果房間回到大廳狀態，且目前在遊戲畫面，則強制切回大廳
     if (roomData.status === 'lobby' && view === 'game') {
       setView('lobby');
     } 
-    // 如果房間開始遊戲，且目前在大廳，則強制切回遊戲
     else if (roomData.status === 'playing' && view === 'lobby') {
       setView('game');
     }
@@ -239,7 +240,6 @@ export default function App() {
   useEffect(() => {
     if (!roomData || roomData.status !== 'playing' || !db || !roomId) return;
     
-    // 只有房主負責執行自動跳過，避免多個客戶端重複發送更新
     if (roomData.host === user?.uid) {
       const currentSlot = roomData.currentTurn;
       if (roomData.surrendered && roomData.surrendered[currentSlot]) {
@@ -253,7 +253,7 @@ export default function App() {
             passCount: newPassCount,
             status: nextStatus
           });
-        }, 800); // 稍微延遲，讓畫面能看出輪轉
+        }, 800);
         return () => clearTimeout(timer);
       }
     }
@@ -297,7 +297,6 @@ export default function App() {
     setView('lobby');
   };
 
-  // 管理員清除所有房間
   const handleAdminClearAll = async () => {
     if (!isAdmin || !db) return;
     if (window.confirm("確定要清除伺服器上所有的房間嗎？這將會中斷正在進行的遊戲。")) {
@@ -307,15 +306,25 @@ export default function App() {
     }
   };
 
-  // 離開房間
   const handleLeaveRoom = () => {
     setView('home');
     setRoomId('');
   };
 
-  // 重置/清除房間 (房主專用)
+  // 房主解散並刪除房間
+  const handleDeleteRoom = async () => {
+    if (!roomData || roomData.host !== user?.uid || !db) return;
+    if (!window.confirm("確定要解散並刪除這個房間嗎？所有玩家將會被踢出。")) return;
+
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
+    await deleteDoc(roomRef);
+    setView('home');
+    setRoomId('');
+  };
+
+  // 重置/清除房間 (包含清除所有已加入的玩家)
   const handleRestartRoom = async () => {
-    if (!roomData) return;
+    if (!roomData || roomData.host !== user?.uid || !db) return;
     const initialBoard = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(null));
     const initialPieces = Array(4).fill().map(() => Array.from({ length: 21 }, (_, i) => i));
     
@@ -326,11 +335,20 @@ export default function App() {
       currentTurn: 0,
       piecesLeft: JSON.stringify(initialPieces),
       passCount: 0,
-      surrendered: [false, false, false, false]
+      surrendered: [false, false, false, false],
+      slots: [null, null, null, null] // 清空所有玩家
     });
   };
 
-  // 佔領/離開顏色槽位
+  // 房主強制結束遊戲
+  const handleForceEndGame = async () => {
+    if (!roomData || roomData.host !== user?.uid) return;
+    if (!window.confirm("確定要強制結束這場遊戲並進行結算嗎？")) return;
+    
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
+    await updateDoc(roomRef, { status: 'finished' });
+  };
+
   const handleClaimSlot = async (slotIndex) => {
     if (!roomData || roomData.status !== 'lobby') return;
     const newSlots = [...roomData.slots];
@@ -349,7 +367,6 @@ export default function App() {
     }
   };
 
-  // 開始遊戲
   const handleStartGame = async () => {
     if (!roomData || roomData.slots.some(s => s === null)) {
       alert("請確保所有 4 個顏色都有玩家加入！");
@@ -364,7 +381,6 @@ export default function App() {
     });
   };
 
-  // 當前玩家與回合判斷
   const isMyTurn = roomData && 
                    roomData.status === 'playing' && 
                    roomData.slots[roomData.currentTurn]?.uid === user?.uid &&
@@ -388,6 +404,11 @@ export default function App() {
 
   const handleConfirmMove = async () => {
     if (!isMyTurn || !isMoveValid || !stagingPos || selectedPieceIndex === null) return;
+
+    // 觸發震動回饋
+    if (vibrationEnabled && navigator.vibrate) {
+      navigator.vibrate([40]); 
+    }
 
     const newBoard = roomData.board.map(row => [...row]);
     activePieceCoords.forEach(([dy, dx]) => {
@@ -444,8 +465,8 @@ export default function App() {
     });
   };
 
-  const calculateScores = () => {
-    if (!roomData || !roomData.piecesLeft) return [];
+  const calculateScores = useCallback(() => {
+    if (!roomData || !roomData.piecesLeft) return [0,0,0,0];
     return roomData.piecesLeft.map(pieces => {
       let squares = 0;
       pieces.forEach(pIdx => {
@@ -453,7 +474,7 @@ export default function App() {
       });
       return squares;
     });
-  };
+  }, [roomData]);
 
 
   // --- 畫面渲染 ---
@@ -471,7 +492,6 @@ export default function App() {
         </div>
 
         <div className="w-full max-w-4xl grid md:grid-cols-2 gap-6">
-          {/* 左側：加入/建立房間 */}
           <div className="bg-slate-800 p-8 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-slate-700 h-fit">
             <h2 className="text-2xl font-bold mb-6 text-indigo-300">加入或創建房間</h2>
             <div className="space-y-5">
@@ -507,7 +527,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* 右側：公開房間列表 */}
           <div className="bg-slate-800 p-6 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-slate-700 flex flex-col h-[400px]">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold text-slate-200">公開房間列表</h2>
@@ -544,7 +563,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* 底部隱藏的管理員功能 */}
         <div className="mt-12 flex flex-col items-center gap-4">
           <button onClick={() => setIsAdmin(!isAdmin)} className="text-slate-700 hover:text-slate-500 transition">
             <ShieldAlert size={20} />
@@ -565,7 +583,6 @@ export default function App() {
           )}
         </div>
 
-        {/* 全域 CSS */}
         <style dangerouslySetInnerHTML={{__html: `
           .custom-scrollbar::-webkit-scrollbar { width: 6px; }
           .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
@@ -584,9 +601,17 @@ export default function App() {
         <div className="bg-slate-800 p-6 sm:p-8 rounded-2xl shadow-2xl max-w-2xl w-full border border-slate-700">
           <div className="flex justify-between items-center mb-8 border-b border-slate-700 pb-4">
             <h2 className="text-2xl font-bold">遊戲大廳: <span className="font-mono text-indigo-400">{roomId}</span></h2>
-            <button onClick={handleLeaveRoom} className="flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 rounded-lg transition">
-              <LogOut size={16} /> 離開房間
-            </button>
+            
+            {/* 這裡替換為解散/離開房間邏輯 */}
+            {isHost ? (
+              <button onClick={handleDeleteRoom} className="flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/20 rounded-lg transition border border-red-900/50">
+                <Trash2 size={16} /> 解散房間
+              </button>
+            ) : (
+              <button onClick={handleLeaveRoom} className="flex items-center gap-2 px-3 py-2 text-sm text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-lg transition">
+                <LogOut size={16} /> 離開房間
+              </button>
+            )}
           </div>
 
           <div className="mb-6 bg-blue-900/40 border border-blue-800 p-4 rounded-lg flex items-start gap-3">
@@ -640,8 +665,8 @@ export default function App() {
                   <Play fill="currentColor" size={20} />
                   開始遊戲
                 </button>
-                <button onClick={handleRestartRoom} className="text-sm text-slate-400 hover:text-white flex items-center gap-1 mt-4">
-                  <RotateCcw size={14} /> 重置房間狀態
+                <button onClick={handleRestartRoom} className="text-sm text-yellow-500 hover:text-yellow-400 flex items-center gap-1 mt-4">
+                  <RotateCcw size={14} /> 踢除所有人並重置狀態
                 </button>
               </>
             ) : (
@@ -659,13 +684,19 @@ export default function App() {
   // --- 遊戲主畫面 ---
   if (view === 'game' && roomData) {
     const isFinished = roomData.status === 'finished';
-    const scores = isFinished ? calculateScores() : null;
+    const currentScores = calculateScores(); // 取得即時分數
     const isHost = roomData.host === user.uid;
+
+    const toggleVibration = () => {
+      setVibrationEnabled(!vibrationEnabled);
+      if (!vibrationEnabled && navigator.vibrate) {
+        navigator.vibrate(50); 
+      }
+    };
 
     return (
       <div className="h-screen bg-slate-900 text-slate-100 flex flex-col font-sans overflow-hidden">
         
-        {/* 定義強化的 3D 與警示 CSS */}
         <style dangerouslySetInnerHTML={{__html: `
           .piece-3d {
             box-shadow: inset 2px 2px 4px rgba(255,255,255,0.4), inset -2px -2px 4px rgba(0,0,0,0.3), 1px 1px 3px rgba(0,0,0,0.4);
@@ -700,16 +731,34 @@ export default function App() {
             <div className="bg-slate-900 border border-slate-700 px-2 py-1 rounded text-xs sm:text-sm font-mono text-indigo-300">{roomId}</div>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {!isFinished && (
-              <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-full pr-4 pl-1 py-1 shadow-inner">
+              <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-full pr-4 pl-1 py-1 shadow-inner mr-2">
                 <div className={`w-4 h-4 rounded-full ${COLORS[roomData.currentTurn].bg} piece-3d`}></div>
-                <span className="text-xs sm:text-sm font-bold">
+                <span className="text-xs sm:text-sm font-bold truncate max-w-[80px] sm:max-w-[150px]">
                   {roomData.slots[roomData.currentTurn]?.name} 
-                  {isMyTurn && <span className="ml-2 text-yellow-400 animate-pulse">思考中...</span>}
+                  {isMyTurn && <span className="ml-2 text-yellow-400 animate-pulse hidden sm:inline">思考中...</span>}
                 </span>
               </div>
             )}
+
+            {/* 震動開關 */}
+            <button 
+              onClick={toggleVibration} 
+              className={`p-2 rounded-lg transition ${vibrationEnabled ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`} 
+              title={vibrationEnabled ? "震動已開啟" : "震動已關閉"}
+            >
+              {vibrationEnabled ? <Vibrate size={18} /> : <VibrateOff size={18} />}
+            </button>
+
+            {/* 房主結束遊戲按鈕 */}
+            {isHost && !isFinished && (
+              <button onClick={handleForceEndGame} className="p-2 text-yellow-500 hover:bg-slate-700 rounded-lg transition" title="強制結束遊戲">
+                <StopCircle size={18} />
+              </button>
+            )}
+
+            {/* 離開房間 */}
             <button onClick={handleLeaveRoom} className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-lg transition" title="離開房間">
               <LogOut size={18} />
             </button>
@@ -718,25 +767,35 @@ export default function App() {
 
         <div className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
           
-          {/* 左側/頂部：玩家狀態列表 */}
+          {/* 左側/頂部：玩家狀態列表 (即時排行榜) */}
           <div className="bg-slate-800/80 p-2 sm:p-4 flex lg:flex-col gap-2 overflow-x-auto lg:overflow-y-auto shrink-0 z-10 border-b lg:border-b-0 lg:border-r border-slate-700 shadow-xl">
+            <div className="hidden lg:flex items-center gap-2 text-slate-400 mb-2 font-bold px-2">
+              <Trophy size={16} /> 即時計分板
+            </div>
             {COLORS.map((c, idx) => {
               const slot = roomData.slots[idx];
               const isActive = roomData.currentTurn === idx && !isFinished;
               const hasSurrendered = roomData.surrendered && roomData.surrendered[idx];
               
               return (
-                <div key={idx} className={`p-2 sm:p-3 rounded-xl border-2 flex-shrink-0 lg:flex-shrink flex lg:flex-col items-center lg:items-start gap-1 sm:gap-2 transition-all ${isActive ? `${c.border} bg-slate-700 shadow-[0_0_15px_rgba(255,255,255,0.15)] scale-105` : hasSurrendered ? 'border-slate-800 bg-slate-900 opacity-40 grayscale' : 'border-slate-700 bg-slate-900/50 opacity-60'}`}>
-                  <div className="flex items-center gap-2">
-                    <div className={`w-3 h-3 sm:w-4 sm:h-4 rounded ${c.bg} piece-3d`}></div>
-                    <span className={`font-bold text-xs sm:text-sm truncate max-w-[80px] lg:max-w-[120px] ${hasSurrendered ? 'line-through' : ''}`}>{slot?.name || '無人'}</span>
+                <div key={idx} className={`p-2 sm:p-3 rounded-xl border-2 flex-shrink-0 lg:flex-shrink flex lg:flex-col items-center lg:items-start gap-1 sm:gap-2 transition-all min-w-[120px] ${isActive ? `${c.border} bg-slate-700 shadow-[0_0_15px_rgba(255,255,255,0.15)] scale-105` : hasSurrendered ? 'border-slate-800 bg-slate-900 opacity-40 grayscale' : 'border-slate-700 bg-slate-900/50 opacity-80'}`}>
+                  <div className="flex items-center gap-2 w-full">
+                    <div className={`w-3 h-3 sm:w-4 sm:h-4 rounded ${c.bg} piece-3d shrink-0`}></div>
+                    <span className={`font-bold text-xs sm:text-sm truncate w-full ${hasSurrendered ? 'line-through' : ''}`}>{slot?.name || '無人'}</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="text-[10px] sm:text-xs text-slate-400 font-mono bg-slate-900 px-2 py-0.5 rounded-full">
-                      剩餘: {roomData.piecesLeft[idx]?.length || 0}
+                  
+                  {/* 計分細節 */}
+                  <div className="flex lg:flex-col gap-1 sm:gap-2 w-full mt-1">
+                    <div className="flex justify-between items-center text-[10px] sm:text-xs text-slate-400 font-mono bg-slate-900 px-2 py-0.5 rounded w-full">
+                      <span>剩餘棋子</span>
+                      <span className="font-bold">{roomData.piecesLeft[idx]?.length || 0}</span>
                     </div>
-                    {hasSurrendered && <span className="text-[10px] text-red-500 font-bold border border-red-500 px-1 rounded">投降</span>}
+                    <div className="flex justify-between items-center text-[10px] sm:text-xs text-yellow-500 font-mono bg-slate-900 px-2 py-0.5 rounded w-full">
+                      <span>目前扣分</span>
+                      <span className="font-bold">-{currentScores[idx]}</span>
+                    </div>
                   </div>
+                  {hasSurrendered && <div className="text-[10px] text-red-500 font-bold border border-red-500 px-1 rounded mt-1 text-center w-full">已投降</div>}
                 </div>
               );
             })}
@@ -748,25 +807,29 @@ export default function App() {
             {isFinished && (
               <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4">
                 <div className="bg-slate-800 border-2 border-yellow-500 p-6 rounded-2xl text-center shadow-[0_0_50px_rgba(234,179,8,0.3)] max-w-sm w-full">
-                  <h2 className="text-3xl font-black text-yellow-500 mb-6">遊戲結束！</h2>
+                  <h2 className="text-3xl font-black text-yellow-500 mb-6 flex justify-center items-center gap-3"><Trophy size={32} /> 遊戲結算</h2>
                   <div className="space-y-3 mb-6">
-                    {scores.map((score, idx) => (
-                      <div key={idx} className={`flex justify-between items-center text-lg bg-slate-900 p-2 rounded-lg border border-slate-700 ${(roomData.surrendered && roomData.surrendered[idx]) ? 'opacity-60' : ''}`}>
-                        <span className="flex items-center gap-2">
-                          <div className={`w-4 h-4 rounded piece-3d ${COLORS[idx].bg}`}></div> 
-                          <span className="font-bold">{COLORS[idx].name}</span>
-                          {(roomData.surrendered && roomData.surrendered[idx]) && <span className="text-xs text-red-500 ml-1">(投降)</span>}
+                    {/* 分數由低到高排序 (越少越好) */}
+                    {currentScores.map((score, idx) => ({ score, idx }))
+                      .sort((a, b) => a.score - b.score)
+                      .map((item, rank) => (
+                      <div key={item.idx} className={`flex justify-between items-center text-lg bg-slate-900 p-3 rounded-lg border ${rank === 0 ? 'border-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.2)]' : 'border-slate-700'} ${(roomData.surrendered && roomData.surrendered[item.idx]) ? 'opacity-60' : ''}`}>
+                        <span className="flex items-center gap-3">
+                          <span className={`font-black text-xl ${rank === 0 ? 'text-yellow-500' : 'text-slate-500'}`}>#{rank + 1}</span>
+                          <div className={`w-4 h-4 rounded piece-3d ${COLORS[item.idx].bg}`}></div> 
+                          <span className="font-bold">{COLORS[item.idx].name}</span>
+                          {(roomData.surrendered && roomData.surrendered[item.idx]) && <span className="text-xs text-red-500 ml-1">(投降)</span>}
                         </span>
-                        <span className="font-mono font-bold text-xl">{score} 分</span>
+                        <span className="font-mono font-bold text-xl text-yellow-400">-{item.score} <span className="text-sm text-slate-500">分</span></span>
                       </div>
                     ))}
                   </div>
-                  <p className="text-xs text-slate-400 mb-6">分數為剩餘的方塊總格數，分數越低越好。</p>
+                  <p className="text-xs text-slate-400 mb-6">分數為剩餘的方塊總格數，扣分越少排名越高！</p>
                   
                   <div className="flex flex-col gap-3">
                     {isHost && (
                       <button onClick={handleRestartRoom} className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg piece-3d w-full">
-                        返回大廳 (重新開始)
+                        返回大廳 (需重新選色)
                       </button>
                     )}
                     <button onClick={handleLeaveRoom} className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-6 rounded-xl w-full">
@@ -878,7 +941,7 @@ export default function App() {
                         onClick={handlePassTurn}
                         className="text-xs flex items-center gap-1 bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg border border-slate-600 shadow-sm transition"
                       >
-                        <SkipForward size={14} /> 略過回合
+                        <SkipForward size={14} /> 略過
                       </button>
                     </div>
                   </div>
@@ -936,7 +999,7 @@ export default function App() {
                     <div className={`absolute inset-0 rounded-full blur-xl opacity-50 ${COLORS[roomData.currentTurn].bg}`}></div>
                     <div className="animate-spin relative rounded-full h-10 w-10 border-t-2 border-b-2 border-white"></div>
                   </div>
-                  <span className="text-sm font-bold">對手 {roomData.slots[roomData.currentTurn]?.name} 思考中...</span>
+                  <span className="text-sm font-bold">等待對手 {roomData.slots[roomData.currentTurn]?.name} 下棋...</span>
                 </div>
               )
             ) : null}
