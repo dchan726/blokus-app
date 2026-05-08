@@ -132,7 +132,7 @@ const MiniPiece = ({ coords, colorClass, onClick, isSelected }) => {
             {row.map((isFilled, x) => (
               <div 
                 key={x} 
-                className={`w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5 ${isFilled ? `${colorClass} piece-3d` : 'bg-transparent'}`} 
+                className={`w-[10px] h-[10px] sm:w-3 sm:h-3 lg:w-[14px] lg:h-[14px] ${isFilled ? `${colorClass} piece-3d` : 'bg-transparent'}`} 
                 style={{ borderRadius: '2px' }}
               />
             ))}
@@ -322,7 +322,7 @@ export default function App() {
     setRoomId('');
   };
 
-  // 重置/清除房間 (包含清除所有已加入的玩家)
+  // 重置/清除房間
   const handleRestartRoom = async () => {
     if (!roomData || roomData.host !== user?.uid || !db) return;
     const initialBoard = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(null));
@@ -336,7 +336,7 @@ export default function App() {
       piecesLeft: JSON.stringify(initialPieces),
       passCount: 0,
       surrendered: [false, false, false, false],
-      slots: [null, null, null, null] // 清空所有玩家
+      slots: [null, null, null, null] 
     });
   };
 
@@ -405,7 +405,6 @@ export default function App() {
   const handleConfirmMove = async () => {
     if (!isMyTurn || !isMoveValid || !stagingPos || selectedPieceIndex === null) return;
 
-    // 觸發震動回饋
     if (vibrationEnabled && navigator.vibrate) {
       navigator.vibrate([40]); 
     }
@@ -480,45 +479,45 @@ export default function App() {
   // --- 畫面渲染 ---
 
   if (!user || !db) {
-    return <div className="flex items-center justify-center h-screen bg-slate-900"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div></div>;
+    return <div className="flex items-center justify-center h-screen bg-slate-900"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-500"></div></div>;
   }
 
   if (view === 'home') {
     return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center py-10 px-4 font-sans text-white overflow-y-auto">
-        <div className="text-center mb-8">
-          <h1 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 mb-2 tracking-tight">角鬥士棋 3D版</h1>
-          <p className="text-slate-400">多人線上連線對戰</p>
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center py-6 px-4 font-sans text-white overflow-y-auto">
+        <div className="text-center mb-6">
+          <h1 className="text-4xl sm:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 mb-1 tracking-tight">角鬥士棋 3D版</h1>
+          <p className="text-sm sm:text-base text-slate-400">多人線上連線對戰</p>
         </div>
 
-        <div className="w-full max-w-4xl grid md:grid-cols-2 gap-6">
-          <div className="bg-slate-800 p-8 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-slate-700 h-fit">
-            <h2 className="text-2xl font-bold mb-6 text-indigo-300">加入或創建房間</h2>
-            <div className="space-y-5">
+        <div className="w-full max-w-4xl grid md:grid-cols-2 gap-4">
+          <div className="bg-slate-800 p-6 rounded-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)] border border-slate-700 h-fit">
+            <h2 className="text-xl font-bold mb-4 text-indigo-300">加入或創建房間</h2>
+            <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">您的玩家名稱</label>
+                <label className="block text-xs font-medium text-slate-300 mb-1">您的玩家名稱</label>
                 <input 
                   type="text" 
                   value={userName} 
                   onChange={(e) => setUserName(e.target.value)}
-                  className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition text-white"
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition text-sm text-white"
                   placeholder="輸入您的名稱"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">輸入房間號碼</label>
+                <label className="block text-xs font-medium text-slate-300 mb-1">輸入房間號碼</label>
                 <div className="flex gap-2">
                   <input 
                     type="text" 
                     value={roomId} 
                     onChange={(e) => setRoomId(e.target.value.toUpperCase())}
-                    className="flex-1 px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition font-mono uppercase text-white tracking-widest text-lg"
+                    className="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition font-mono uppercase text-white tracking-widest text-base"
                     placeholder="例如: ROOM123"
                   />
                   <button 
                     onClick={() => handleJoinOrCreate(roomId)}
                     disabled={!roomId.trim() || !userName.trim()}
-                    className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold px-6 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shrink-0"
+                    className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold px-4 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md shrink-0 text-sm"
                   >
                     進入
                   </button>
@@ -527,24 +526,24 @@ export default function App() {
             </div>
           </div>
 
-          <div className="bg-slate-800 p-6 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-slate-700 flex flex-col h-[400px]">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold text-slate-200">公開房間列表</h2>
-              <div className="text-xs bg-slate-700 px-2 py-1 rounded text-slate-300">共 {roomsList.length} 個</div>
+          <div className="bg-slate-800 p-5 rounded-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)] border border-slate-700 flex flex-col h-[350px]">
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="text-lg font-bold text-slate-200">公開房間列表</h2>
+              <div className="text-[10px] bg-slate-700 px-2 py-1 rounded text-slate-300">共 {roomsList.length} 個</div>
             </div>
             
-            <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-3">
+            <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-2">
               {roomsList.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-slate-500">
-                  <div className="text-4xl mb-2">👻</div>
-                  <p>目前沒有房間，趕快建立一個吧！</p>
+                  <div className="text-3xl mb-1">👻</div>
+                  <p className="text-sm">目前沒有房間，趕快建立一個吧！</p>
                 </div>
               ) : (
                 roomsList.map(room => (
-                  <div key={room.id} className="bg-slate-900/80 border border-slate-700 p-3 rounded-xl flex justify-between items-center hover:border-indigo-500 transition group">
+                  <div key={room.id} className="bg-slate-900/80 border border-slate-700 p-2.5 rounded-xl flex justify-between items-center hover:border-indigo-500 transition group">
                     <div>
-                      <div className="font-mono text-lg font-bold text-indigo-300">{room.id}</div>
-                      <div className="text-xs text-slate-400 mt-1 flex gap-2">
+                      <div className="font-mono text-base font-bold text-indigo-300">{room.id}</div>
+                      <div className="text-[10px] text-slate-400 flex gap-2 mt-0.5">
                         <span>狀態: {room.status === 'playing' ? <span className="text-yellow-500">遊戲中</span> : <span className="text-green-500">等待中</span>}</span>
                         <span>| 人數: {room.slots ? room.slots.filter(s => s !== null).length : 0}/4</span>
                       </div>
@@ -552,7 +551,7 @@ export default function App() {
                     <button 
                       onClick={() => handleJoinOrCreate(room.id)}
                       disabled={!userName.trim()}
-                      className="bg-slate-700 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-bold transition disabled:opacity-50"
+                      className="bg-slate-700 hover:bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition disabled:opacity-50"
                     >
                       加入
                     </button>
@@ -563,28 +562,28 @@ export default function App() {
           </div>
         </div>
 
-        <div className="mt-12 flex flex-col items-center gap-4">
+        <div className="mt-8 flex flex-col items-center gap-3">
           <button onClick={() => setIsAdmin(!isAdmin)} className="text-slate-700 hover:text-slate-500 transition">
-            <ShieldAlert size={20} />
+            <ShieldAlert size={16} />
           </button>
           
           {isAdmin && (
-            <div className="bg-red-900/30 border border-red-800 p-4 rounded-xl flex flex-col items-center gap-3">
-              <span className="text-red-400 font-bold text-sm">⚠️ 管理員模式已開啟</span>
+            <div className="bg-red-900/30 border border-red-800 p-3 rounded-xl flex flex-col items-center gap-2">
+              <span className="text-red-400 font-bold text-xs">⚠️ 管理員模式已開啟</span>
               <button 
                 onClick={handleAdminClearAll}
                 disabled={roomsList.length === 0}
-                className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition disabled:opacity-50 disabled:grayscale"
+                className="bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition disabled:opacity-50 disabled:grayscale"
               >
-                <Trash2 size={16} />
-                清除伺服器上所有房間
+                <Trash2 size={14} />
+                清除所有房間
               </button>
             </div>
           )}
         </div>
 
         <style dangerouslySetInnerHTML={{__html: `
-          .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+          .custom-scrollbar::-webkit-scrollbar { width: 4px; }
           .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
           .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
         `}} />
@@ -597,54 +596,53 @@ export default function App() {
     const allSlotsFilled = roomData.slots.every(s => s !== null);
 
     return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center p-4 sm:p-8 font-sans text-slate-100">
-        <div className="bg-slate-800 p-6 sm:p-8 rounded-2xl shadow-2xl max-w-2xl w-full border border-slate-700">
-          <div className="flex justify-between items-center mb-8 border-b border-slate-700 pb-4">
-            <h2 className="text-2xl font-bold">遊戲大廳: <span className="font-mono text-indigo-400">{roomId}</span></h2>
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center p-4 font-sans text-slate-100 overflow-y-auto">
+        <div className="bg-slate-800 p-5 sm:p-6 rounded-2xl shadow-2xl max-w-xl w-full border border-slate-700">
+          <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-3">
+            <h2 className="text-xl font-bold">遊戲大廳: <span className="font-mono text-indigo-400">{roomId}</span></h2>
             
-            {/* 這裡替換為解散/離開房間邏輯 */}
             {isHost ? (
-              <button onClick={handleDeleteRoom} className="flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/20 rounded-lg transition border border-red-900/50">
-                <Trash2 size={16} /> 解散房間
+              <button onClick={handleDeleteRoom} className="flex items-center gap-1 px-2 py-1.5 text-xs text-red-400 hover:bg-red-500/20 rounded-md transition border border-red-900/50">
+                <Trash2 size={14} /> 解散房間
               </button>
             ) : (
-              <button onClick={handleLeaveRoom} className="flex items-center gap-2 px-3 py-2 text-sm text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-lg transition">
-                <LogOut size={16} /> 離開房間
+              <button onClick={handleLeaveRoom} className="flex items-center gap-1 px-2 py-1.5 text-xs text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-md transition">
+                <LogOut size={14} /> 離開房間
               </button>
             )}
           </div>
 
-          <div className="mb-6 bg-blue-900/40 border border-blue-800 p-4 rounded-lg flex items-start gap-3">
-            <AlertCircle className="text-blue-400 shrink-0 mt-0.5" size={20} />
-            <div className="text-sm text-blue-200">
+          <div className="mb-5 bg-blue-900/40 border border-blue-800 p-3 rounded-lg flex items-start gap-2">
+            <AlertCircle className="text-blue-400 shrink-0 mt-0.5" size={16} />
+            <div className="text-xs text-blue-200">
               <p>需要 4 個顏色都有人佔領才能開始。</p>
-              <p>若為 2 人遊玩，每人可點擊佔領 2 個顏色 (建議選擇對角線顏色，如紅+黃)。</p>
+              <p>若為 2 人遊玩，每人可點擊佔領 2 個顏色 (建議選擇對角線，如紅+黃)。</p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
             {COLORS.map((color, idx) => {
               const slot = roomData.slots[idx];
               const isMySlot = slot?.uid === user.uid;
               
               return (
-                <div key={idx} className={`p-4 rounded-xl border-2 flex justify-between items-center bg-slate-900/50 ${color.border}`}>
-                  <div className="flex items-center gap-3">
-                    <div className={`w-6 h-6 rounded-md ${color.bg} piece-3d`}></div>
-                    <span className="font-bold text-slate-200">{color.name}</span>
+                <div key={idx} className={`p-3 rounded-xl border-2 flex justify-between items-center bg-slate-900/50 ${color.border}`}>
+                  <div className="flex items-center gap-2">
+                    <div className={`w-5 h-5 rounded-md ${color.bg} piece-3d`}></div>
+                    <span className="font-bold text-sm text-slate-200">{color.name}</span>
                   </div>
                   
                   {slot ? (
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">{slot.name}</span>
+                      <span className="text-xs font-medium truncate max-w-[80px]">{slot.name}</span>
                       {isMySlot && (
-                        <button onClick={() => handleLeaveSlot(idx)} className="text-xs bg-red-500/20 text-red-400 hover:bg-red-500/40 px-2 py-1 rounded">退出</button>
+                        <button onClick={() => handleLeaveSlot(idx)} className="text-[10px] bg-red-500/20 text-red-400 hover:bg-red-500/40 px-2 py-1 rounded">退出</button>
                       )}
                     </div>
                   ) : (
                     <button 
                       onClick={() => handleClaimSlot(idx)}
-                      className={`px-4 py-2 rounded-lg text-sm font-bold text-white transition piece-3d ${color.bg} hover:brightness-110 active:translate-y-px`}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white transition piece-3d ${color.bg} hover:brightness-110 active:translate-y-px`}
                     >
                       加入 {color.name}
                     </button>
@@ -654,25 +652,25 @@ export default function App() {
             })}
           </div>
 
-          <div className="flex flex-col items-center gap-4">
+          <div className="flex flex-col items-center gap-3">
             {isHost ? (
               <>
                 <button 
                   onClick={handleStartGame}
                   disabled={!allSlotsFilled}
-                  className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white font-bold py-3 px-8 rounded-full shadow-lg transition disabled:opacity-50 disabled:grayscale flex items-center gap-2 text-lg w-full sm:w-auto justify-center piece-3d"
+                  className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white font-bold py-2.5 px-6 rounded-full shadow-lg transition disabled:opacity-50 disabled:grayscale flex items-center gap-1.5 text-base w-full sm:w-auto justify-center piece-3d"
                 >
-                  <Play fill="currentColor" size={20} />
+                  <Play fill="currentColor" size={16} />
                   開始遊戲
                 </button>
-                <button onClick={handleRestartRoom} className="text-sm text-yellow-500 hover:text-yellow-400 flex items-center gap-1 mt-4">
-                  <RotateCcw size={14} /> 踢除所有人並重置狀態
+                <button onClick={handleRestartRoom} className="text-xs text-yellow-500 hover:text-yellow-400 flex items-center gap-1 mt-2">
+                  <RotateCcw size={12} /> 踢除所有人並重置狀態
                 </button>
               </>
             ) : (
               <div className="text-center text-slate-400 flex flex-col items-center">
-                <div className="animate-pulse mb-2 text-lg">等待房主開始遊戲...</div>
-                {!allSlotsFilled && <div className="text-sm">等待所有顏色都有玩家加入</div>}
+                <div className="animate-pulse mb-1 text-sm">等待房主開始遊戲...</div>
+                {!allSlotsFilled && <div className="text-[10px]">等待所有顏色都有玩家加入</div>}
               </div>
             )}
           </div>
@@ -684,14 +682,12 @@ export default function App() {
   // --- 遊戲主畫面 ---
   if (view === 'game' && roomData) {
     const isFinished = roomData.status === 'finished';
-    const currentScores = calculateScores(); // 取得即時分數
+    const currentScores = calculateScores(); 
     const isHost = roomData.host === user.uid;
 
     const toggleVibration = () => {
       setVibrationEnabled(!vibrationEnabled);
-      if (!vibrationEnabled && navigator.vibrate) {
-        navigator.vibrate(50); 
-      }
+      if (!vibrationEnabled && navigator.vibrate) navigator.vibrate(40); 
     };
 
     return (
@@ -699,17 +695,17 @@ export default function App() {
         
         <style dangerouslySetInnerHTML={{__html: `
           .piece-3d {
-            box-shadow: inset 2px 2px 4px rgba(255,255,255,0.4), inset -2px -2px 4px rgba(0,0,0,0.3), 1px 1px 3px rgba(0,0,0,0.4);
+            box-shadow: inset 1px 1px 3px rgba(255,255,255,0.4), inset -1px -1px 3px rgba(0,0,0,0.3), 1px 1px 2px rgba(0,0,0,0.4);
             border: 1px solid rgba(0,0,0,0.1);
           }
           .cell-empty {
             background-color: #334155; 
-            box-shadow: inset 1px 1px 4px rgba(0,0,0,0.4);
+            box-shadow: inset 1px 1px 3px rgba(0,0,0,0.4);
             border: 1px solid #1e293b;
           }
           .cell-invalid {
-            background: repeating-linear-gradient(45deg, #ef4444, #ef4444 8px, #991b1b 8px, #991b1b 16px);
-            box-shadow: 0 0 15px rgba(239, 68, 68, 0.8);
+            background: repeating-linear-gradient(45deg, #ef4444, #ef4444 6px, #991b1b 6px, #991b1b 12px);
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.8);
             border: 2px solid #7f1d1d;
             animation: pulse-alert 0.8s infinite;
             z-index: 10;
@@ -724,115 +720,98 @@ export default function App() {
           .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
         `}} />
 
-        {/* 頂部資訊列 */}
-        <header className="bg-slate-800 p-3 shadow-[0_4px_20px_rgba(0,0,0,0.4)] flex justify-between items-center z-10 shrink-0 border-b border-slate-700">
-          <div className="flex items-center gap-2 sm:gap-4">
-            <h1 className="text-lg font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 hidden sm:block">BLOKUS</h1>
-            <div className="bg-slate-900 border border-slate-700 px-2 py-1 rounded text-xs sm:text-sm font-mono text-indigo-300">{roomId}</div>
+        {/* 極簡化頂部導覽列 */}
+        <header className="bg-slate-800 p-1.5 sm:p-2 shadow-md flex justify-between items-center z-10 shrink-0 border-b border-slate-700">
+          <div className="flex items-center gap-2">
+            <h1 className="text-base font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 hidden sm:block ml-1">BLOKUS</h1>
+            <div className="bg-slate-900 border border-slate-700 px-1.5 py-0.5 rounded text-[10px] sm:text-xs font-mono text-indigo-300">{roomId}</div>
           </div>
           
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-1 sm:gap-2">
             {!isFinished && (
-              <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-full pr-4 pl-1 py-1 shadow-inner mr-2">
-                <div className={`w-4 h-4 rounded-full ${COLORS[roomData.currentTurn].bg} piece-3d`}></div>
-                <span className="text-xs sm:text-sm font-bold truncate max-w-[80px] sm:max-w-[150px]">
+              <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 rounded-full pr-3 pl-1 py-0.5 shadow-inner mr-1">
+                <div className={`w-3 h-3 rounded-full ${COLORS[roomData.currentTurn].bg} piece-3d`}></div>
+                <span className="text-[10px] sm:text-xs font-bold truncate max-w-[60px] sm:max-w-[100px]">
                   {roomData.slots[roomData.currentTurn]?.name} 
-                  {isMyTurn && <span className="ml-2 text-yellow-400 animate-pulse hidden sm:inline">思考中...</span>}
                 </span>
+                {isMyTurn && <span className="ml-1 text-[9px] text-yellow-400 animate-pulse hidden sm:inline">思考中</span>}
               </div>
             )}
 
-            {/* 震動開關 */}
-            <button 
-              onClick={toggleVibration} 
-              className={`p-2 rounded-lg transition ${vibrationEnabled ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`} 
-              title={vibrationEnabled ? "震動已開啟" : "震動已關閉"}
-            >
-              {vibrationEnabled ? <Vibrate size={18} /> : <VibrateOff size={18} />}
+            <button onClick={toggleVibration} className={`p-1.5 rounded-lg transition ${vibrationEnabled ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}>
+              {vibrationEnabled ? <Vibrate size={14} /> : <VibrateOff size={14} />}
             </button>
 
-            {/* 房主結束遊戲按鈕 */}
             {isHost && !isFinished && (
-              <button onClick={handleForceEndGame} className="p-2 text-yellow-500 hover:bg-slate-700 rounded-lg transition" title="強制結束遊戲">
-                <StopCircle size={18} />
+              <button onClick={handleForceEndGame} className="p-1.5 text-yellow-500 hover:bg-slate-700 rounded-lg transition">
+                <StopCircle size={14} />
               </button>
             )}
 
-            {/* 離開房間 */}
-            <button onClick={handleLeaveRoom} className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-lg transition" title="離開房間">
-              <LogOut size={18} />
+            <button onClick={handleLeaveRoom} className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-lg transition">
+              <LogOut size={14} />
             </button>
           </div>
         </header>
 
         <div className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
           
-          {/* 左側/頂部：玩家狀態列表 (即時排行榜) */}
-          <div className="bg-slate-800/80 p-2 sm:p-4 flex lg:flex-col gap-2 overflow-x-auto lg:overflow-y-auto shrink-0 z-10 border-b lg:border-b-0 lg:border-r border-slate-700 shadow-xl">
-            <div className="hidden lg:flex items-center gap-2 text-slate-400 mb-2 font-bold px-2">
-              <Trophy size={16} /> 即時計分板
-            </div>
+          {/* 極簡化計分板 (微型 Chips) */}
+          <div className="bg-slate-800/90 p-1.5 flex lg:flex-col gap-1.5 overflow-x-auto lg:overflow-y-auto shrink-0 z-10 border-b lg:border-b-0 lg:border-r border-slate-700 shadow-sm lg:w-36 items-center lg:items-stretch">
             {COLORS.map((c, idx) => {
               const slot = roomData.slots[idx];
               const isActive = roomData.currentTurn === idx && !isFinished;
               const hasSurrendered = roomData.surrendered && roomData.surrendered[idx];
               
               return (
-                <div key={idx} className={`p-2 sm:p-3 rounded-xl border-2 flex-shrink-0 lg:flex-shrink flex lg:flex-col items-center lg:items-start gap-1 sm:gap-2 transition-all min-w-[120px] ${isActive ? `${c.border} bg-slate-700 shadow-[0_0_15px_rgba(255,255,255,0.15)] scale-105` : hasSurrendered ? 'border-slate-800 bg-slate-900 opacity-40 grayscale' : 'border-slate-700 bg-slate-900/50 opacity-80'}`}>
-                  <div className="flex items-center gap-2 w-full">
-                    <div className={`w-3 h-3 sm:w-4 sm:h-4 rounded ${c.bg} piece-3d shrink-0`}></div>
-                    <span className={`font-bold text-xs sm:text-sm truncate w-full ${hasSurrendered ? 'line-through' : ''}`}>{slot?.name || '無人'}</span>
+                <div key={idx} className={`px-2 py-1 sm:p-2 rounded-lg border flex-shrink-0 flex lg:flex-col items-center lg:items-start gap-1 lg:gap-1.5 transition-all min-w-[100px] lg:w-full ${isActive ? `${c.border} bg-slate-700 shadow-[0_0_8px_rgba(255,255,255,0.15)]` : hasSurrendered ? 'border-slate-800 bg-slate-900 opacity-40 grayscale' : 'border-slate-700 bg-slate-900/50 opacity-80'}`}>
+                  
+                  <div className="flex items-center gap-1.5 w-full">
+                    <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-[2px] ${c.bg} piece-3d shrink-0`}></div>
+                    <span className={`font-bold text-[10px] sm:text-xs truncate w-full ${hasSurrendered ? 'line-through text-slate-500' : 'text-slate-300'}`}>{slot?.name || '無人'}</span>
                   </div>
                   
-                  {/* 計分細節 */}
-                  <div className="flex lg:flex-col gap-1 sm:gap-2 w-full mt-1">
-                    <div className="flex justify-between items-center text-[10px] sm:text-xs text-slate-400 font-mono bg-slate-900 px-2 py-0.5 rounded w-full">
-                      <span>剩餘棋子</span>
-                      <span className="font-bold">{roomData.piecesLeft[idx]?.length || 0}</span>
-                    </div>
-                    <div className="flex justify-between items-center text-[10px] sm:text-xs text-yellow-500 font-mono bg-slate-900 px-2 py-0.5 rounded w-full">
-                      <span>目前扣分</span>
-                      <span className="font-bold">-{currentScores[idx]}</span>
-                    </div>
+                  <div className="flex gap-1.5 w-full text-[9px] sm:text-[10px] bg-slate-900/80 px-1 py-0.5 rounded text-slate-400 font-mono items-center justify-between lg:justify-start">
+                    <span title="剩餘棋子數">剩:{roomData.piecesLeft[idx]?.length || 0}</span>
+                    <span title="目前扣分數" className={`${isActive ? 'text-yellow-400' : 'text-slate-500'}`}>分:-{currentScores[idx]}</span>
                   </div>
-                  {hasSurrendered && <div className="text-[10px] text-red-500 font-bold border border-red-500 px-1 rounded mt-1 text-center w-full">已投降</div>}
+                  
+                  {hasSurrendered && <div className="hidden lg:block text-[9px] text-red-500 font-bold w-full text-center mt-0.5">已投降</div>}
                 </div>
               );
             })}
           </div>
 
-          {/* 中央：棋盤與遊戲結束畫面 */}
-          <div className="flex-1 flex flex-col items-center justify-center p-2 sm:p-4 overflow-hidden relative">
+          {/* 中央：棋盤與遊戲結束畫面 (獲得更多空間) */}
+          <div className="flex-1 flex flex-col items-center justify-center p-1 sm:p-2 overflow-hidden relative">
             
             {isFinished && (
               <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4">
-                <div className="bg-slate-800 border-2 border-yellow-500 p-6 rounded-2xl text-center shadow-[0_0_50px_rgba(234,179,8,0.3)] max-w-sm w-full">
-                  <h2 className="text-3xl font-black text-yellow-500 mb-6 flex justify-center items-center gap-3"><Trophy size={32} /> 遊戲結算</h2>
-                  <div className="space-y-3 mb-6">
-                    {/* 分數由低到高排序 (越少越好) */}
+                <div className="bg-slate-800 border-2 border-yellow-500 p-5 rounded-2xl text-center shadow-[0_0_40px_rgba(234,179,8,0.3)] max-w-sm w-full">
+                  <h2 className="text-2xl font-black text-yellow-500 mb-5 flex justify-center items-center gap-2"><Trophy size={24} /> 遊戲結算</h2>
+                  <div className="space-y-2 mb-5">
                     {currentScores.map((score, idx) => ({ score, idx }))
                       .sort((a, b) => a.score - b.score)
                       .map((item, rank) => (
-                      <div key={item.idx} className={`flex justify-between items-center text-lg bg-slate-900 p-3 rounded-lg border ${rank === 0 ? 'border-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.2)]' : 'border-slate-700'} ${(roomData.surrendered && roomData.surrendered[item.idx]) ? 'opacity-60' : ''}`}>
-                        <span className="flex items-center gap-3">
-                          <span className={`font-black text-xl ${rank === 0 ? 'text-yellow-500' : 'text-slate-500'}`}>#{rank + 1}</span>
-                          <div className={`w-4 h-4 rounded piece-3d ${COLORS[item.idx].bg}`}></div> 
+                      <div key={item.idx} className={`flex justify-between items-center text-sm bg-slate-900 p-2.5 rounded-lg border ${rank === 0 ? 'border-yellow-500 shadow-[0_0_10px_rgba(234,179,8,0.2)]' : 'border-slate-700'} ${(roomData.surrendered && roomData.surrendered[item.idx]) ? 'opacity-60' : ''}`}>
+                        <span className="flex items-center gap-2">
+                          <span className={`font-black text-lg ${rank === 0 ? 'text-yellow-500' : 'text-slate-500'}`}>#{rank + 1}</span>
+                          <div className={`w-3 h-3 rounded-sm piece-3d ${COLORS[item.idx].bg}`}></div> 
                           <span className="font-bold">{COLORS[item.idx].name}</span>
-                          {(roomData.surrendered && roomData.surrendered[item.idx]) && <span className="text-xs text-red-500 ml-1">(投降)</span>}
+                          {(roomData.surrendered && roomData.surrendered[item.idx]) && <span className="text-[10px] text-red-500 ml-1">(投降)</span>}
                         </span>
-                        <span className="font-mono font-bold text-xl text-yellow-400">-{item.score} <span className="text-sm text-slate-500">分</span></span>
+                        <span className="font-mono font-bold text-lg text-yellow-400">-{item.score} <span className="text-[10px] text-slate-500">分</span></span>
                       </div>
                     ))}
                   </div>
-                  <p className="text-xs text-slate-400 mb-6">分數為剩餘的方塊總格數，扣分越少排名越高！</p>
                   
-                  <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-2">
                     {isHost && (
-                      <button onClick={handleRestartRoom} className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg piece-3d w-full">
-                        返回大廳 (需重新選色)
+                      <button onClick={handleRestartRoom} className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold py-2.5 px-4 rounded-xl shadow-lg piece-3d w-full text-sm">
+                        返回大廳 (重新開始)
                       </button>
                     )}
-                    <button onClick={handleLeaveRoom} className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-6 rounded-xl w-full">
+                    <button onClick={handleLeaveRoom} className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-2.5 px-4 rounded-xl w-full text-sm">
                       離開房間
                     </button>
                   </div>
@@ -840,10 +819,10 @@ export default function App() {
               </div>
             )}
 
-            {/* 響應式 3D 棋盤 */}
-            <div className="w-full max-w-[95vw] sm:max-w-[500px] lg:max-w-[600px] aspect-square relative select-none">
+            {/* 放大版的 3D 棋盤 */}
+            <div className="w-full max-w-[98vw] sm:max-w-[550px] lg:max-w-[700px] aspect-square relative select-none">
               <div 
-                className="w-full h-full bg-slate-900 rounded-lg p-[3px] shadow-[0_10px_40px_rgba(0,0,0,0.8)] border border-slate-600"
+                className="w-full h-full bg-slate-900 rounded p-[2px] shadow-[0_10px_30px_rgba(0,0,0,0.8)] border border-slate-600"
                 onMouseLeave={() => setStagingPos(null)}
               >
                 <div 
@@ -875,11 +854,10 @@ export default function App() {
                           cellClasses = `cell-invalid scale-110`;
                         }
                       } else {
-                        // 在四個角落顯示起始顏色的圓點標示
-                        if (y === 0 && x === 0) innerElement = <div className="w-1/2 h-1/2 rounded-full bg-red-500/60 shadow-[0_0_10px_rgba(239,68,68,0.8)] animate-pulse" />;
-                        else if (y === 0 && x === 19) innerElement = <div className="w-1/2 h-1/2 rounded-full bg-blue-500/60 shadow-[0_0_10px_rgba(59,130,246,0.8)] animate-pulse" />;
-                        else if (y === 19 && x === 19) innerElement = <div className="w-1/2 h-1/2 rounded-full bg-yellow-500/60 shadow-[0_0_10px_rgba(234,179,8,0.8)] animate-pulse" />;
-                        else if (y === 19 && x === 0) innerElement = <div className="w-1/2 h-1/2 rounded-full bg-green-500/60 shadow-[0_0_10px_rgba(34,197,94,0.8)] animate-pulse" />;
+                        if (y === 0 && x === 0) innerElement = <div className="w-1/2 h-1/2 rounded-full bg-red-500/60 shadow-[0_0_8px_rgba(239,68,68,0.8)] animate-pulse" />;
+                        else if (y === 0 && x === 19) innerElement = <div className="w-1/2 h-1/2 rounded-full bg-blue-500/60 shadow-[0_0_8px_rgba(59,130,246,0.8)] animate-pulse" />;
+                        else if (y === 19 && x === 19) innerElement = <div className="w-1/2 h-1/2 rounded-full bg-yellow-500/60 shadow-[0_0_8px_rgba(234,179,8,0.8)] animate-pulse" />;
+                        else if (y === 19 && x === 0) innerElement = <div className="w-1/2 h-1/2 rounded-full bg-green-500/60 shadow-[0_0_8px_rgba(34,197,94,0.8)] animate-pulse" />;
                       }
 
                       return (
@@ -901,15 +879,14 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 確認放置按鈕 */}
               {isMyTurn && stagingPos && selectedPieceIndex !== null && (
                 <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none w-full flex justify-center">
                   <button
                     onClick={handleConfirmMove}
                     disabled={!isMoveValid}
-                    className={`pointer-events-auto flex items-center gap-2 px-8 py-4 rounded-full font-black text-lg shadow-[0_10px_30px_rgba(0,0,0,0.5)] transition-all ${isMoveValid ? 'bg-green-500 hover:bg-green-400 text-white scale-100 piece-3d' : 'opacity-0 scale-50'}`}
+                    className={`pointer-events-auto flex items-center gap-1.5 px-6 py-3 rounded-full font-black text-base shadow-[0_8px_20px_rgba(0,0,0,0.5)] transition-all ${isMoveValid ? 'bg-green-500 hover:bg-green-400 text-white scale-100 piece-3d' : 'opacity-0 scale-50'}`}
                   >
-                    <Check size={28} />
+                    <Check size={20} />
                     確認放置
                   </button>
                 </div>
@@ -917,58 +894,55 @@ export default function App() {
             </div>
           </div>
           
-          {/* 右側/底部：當前回合玩家的操作與棋子庫 */}
-          <div className="h-[220px] lg:h-auto lg:w-80 bg-slate-800 p-3 shadow-[0_-10px_20px_rgba(0,0,0,0.3)] flex flex-col z-20 shrink-0 border-t lg:border-t-0 lg:border-l border-slate-700">
+          {/* 擴大的方塊選擇盤 */}
+          <div className="h-[32vh] min-h-[200px] lg:h-auto lg:w-[320px] xl:w-[380px] bg-slate-800 p-2 sm:p-3 shadow-[0_-10px_20px_rgba(0,0,0,0.3)] flex flex-col z-20 shrink-0 border-t lg:border-t-0 lg:border-l border-slate-700">
             {!isFinished ? (
               isMyTurn ? (
                 <>
-                  <div className="flex justify-between items-center mb-2 shrink-0">
-                    <h3 className="font-bold text-sm sm:text-base text-white flex items-center gap-2">
-                      <div className={`w-3 h-3 rounded-full ${COLORS[currentColor].bg} piece-3d`}></div>
-                      你的回合
+                  <div className="flex justify-between items-center mb-1.5 shrink-0">
+                    <h3 className="font-bold text-xs sm:text-sm text-white flex items-center gap-1.5">
+                      <div className={`w-2.5 h-2.5 rounded-full ${COLORS[currentColor].bg} piece-3d`}></div>
+                      你的方塊
                     </h3>
-                    <div className="flex gap-2">
-                      {/* 投降按鈕 */}
+                    <div className="flex gap-1.5">
                       <button 
                         onClick={handleSurrender}
-                        className={`text-xs flex items-center gap-1 px-3 py-1.5 rounded-lg border shadow-sm transition ${confirmSurrender ? 'bg-red-600 border-red-500 text-white font-bold animate-pulse' : 'bg-slate-800 border-red-900 text-red-400 hover:bg-slate-700'}`}
+                        className={`text-[10px] sm:text-xs flex items-center gap-0.5 px-2 py-1 rounded border shadow-sm transition ${confirmSurrender ? 'bg-red-600 border-red-500 text-white font-bold animate-pulse' : 'bg-slate-800 border-red-900 text-red-400 hover:bg-slate-700'}`}
                       >
-                        <Flag size={14} /> {confirmSurrender ? '確定投降?' : '投降'}
+                        <Flag size={12} /> {confirmSurrender ? '確定?' : '投降'}
                       </button>
-                      
-                      {/* 放棄回合按鈕 */}
                       <button 
                         onClick={handlePassTurn}
-                        className="text-xs flex items-center gap-1 bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg border border-slate-600 shadow-sm transition"
+                        className="text-[10px] sm:text-xs flex items-center gap-0.5 bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded border border-slate-600 shadow-sm transition"
                       >
-                        <SkipForward size={14} /> 略過
+                        <SkipForward size={12} /> 略過
                       </button>
                     </div>
                   </div>
                   
                   {/* 控制區 */}
                   {selectedPieceIndex !== null && (
-                    <div className="flex justify-center gap-4 mb-2 shrink-0">
+                    <div className="flex justify-center gap-2 mb-1.5 shrink-0">
                       <button 
                         onClick={() => setTransform(prev => ({ ...prev, rot: (prev.rot + 1) % 4 }))}
-                        className="flex-1 flex flex-col items-center gap-1 bg-slate-900/50 hover:bg-slate-700 p-2 rounded-lg border border-slate-600 transition"
+                        className="flex-1 flex flex-col items-center gap-0.5 bg-slate-900/50 hover:bg-slate-700 py-1.5 rounded-lg border border-slate-600 transition"
                       >
-                        <RotateCw size={20} className="text-indigo-400" />
-                        <span className="text-[10px] text-slate-300">旋轉</span>
+                        <RotateCw size={16} className="text-indigo-400" />
+                        <span className="text-[9px] text-slate-300">旋轉</span>
                       </button>
                       <button 
                         onClick={() => setTransform(prev => ({ ...prev, flipX: !prev.flipX }))}
-                        className="flex-1 flex flex-col items-center gap-1 bg-slate-900/50 hover:bg-slate-700 p-2 rounded-lg border border-slate-600 transition"
+                        className="flex-1 flex flex-col items-center gap-0.5 bg-slate-900/50 hover:bg-slate-700 py-1.5 rounded-lg border border-slate-600 transition"
                       >
-                        <FlipHorizontal size={20} className="text-purple-400" />
-                        <span className="text-[10px] text-slate-300">翻轉</span>
+                        <FlipHorizontal size={16} className="text-purple-400" />
+                        <span className="text-[9px] text-slate-300">翻轉</span>
                       </button>
                     </div>
                   )}
 
                   {/* 棋子庫 */}
-                  <div className="flex-1 overflow-y-auto custom-scrollbar p-1 bg-slate-900/30 rounded-xl border border-slate-700/50">
-                    <div className="flex flex-wrap gap-2 sm:gap-3 justify-center">
+                  <div className="flex-1 overflow-y-auto custom-scrollbar p-1.5 bg-slate-900/30 rounded-lg border border-slate-700/50">
+                    <div className="flex flex-wrap gap-1.5 sm:gap-2 justify-center lg:justify-start">
                       {roomData.piecesLeft[currentColor].map((pieceIdx) => (
                         <MiniPiece 
                           key={pieceIdx}
@@ -988,18 +962,18 @@ export default function App() {
                         />
                       ))}
                       {roomData.piecesLeft[currentColor].length === 0 && (
-                        <div className="text-center text-slate-400 mt-6 w-full text-sm">你已用完所有棋子！</div>
+                        <div className="text-center text-slate-400 mt-4 w-full text-xs">你已用完所有棋子！</div>
                       )}
                     </div>
                   </div>
                 </>
               ) : (
-                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 text-center p-4">
-                  <div className="relative mb-4">
-                    <div className={`absolute inset-0 rounded-full blur-xl opacity-50 ${COLORS[roomData.currentTurn].bg}`}></div>
-                    <div className="animate-spin relative rounded-full h-10 w-10 border-t-2 border-b-2 border-white"></div>
+                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 text-center p-2">
+                  <div className="relative mb-3">
+                    <div className={`absolute inset-0 rounded-full blur-lg opacity-40 ${COLORS[roomData.currentTurn].bg}`}></div>
+                    <div className="animate-spin relative rounded-full h-8 w-8 border-t-2 border-b-2 border-white"></div>
                   </div>
-                  <span className="text-sm font-bold">等待對手 {roomData.slots[roomData.currentTurn]?.name} 下棋...</span>
+                  <span className="text-xs font-bold">等待 {roomData.slots[roomData.currentTurn]?.name} 下棋...</span>
                 </div>
               )
             ) : null}
