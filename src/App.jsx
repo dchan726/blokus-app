@@ -2,7 +2,10 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
-  signInAnonymously, 
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
+  signOut,
   onAuthStateChanged 
 } from 'firebase/auth';
 import { 
@@ -18,7 +21,7 @@ import {
 import { 
   RotateCw, FlipHorizontal, Check, Users, AlertCircle, Play, 
   SkipForward, LogOut, RotateCcw, Flag, Trash2, ShieldAlert,
-  Vibrate, VibrateOff, StopCircle, Trophy, User, RefreshCw, Edit3
+  Vibrate, VibrateOff, StopCircle, Trophy, User, RefreshCw, Edit3, Mail, Lock
 } from 'lucide-react';
 
 // --- 您專屬的 Firebase 設定 ---
@@ -145,15 +148,24 @@ const MiniPiece = ({ coords, colorClass, onClick, isSelected }) => {
 
 
 export default function App() {
-  const [user, setUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false); 
+  const [user, setUser] = useState(null); 
   const [db, setDb] = useState(null);
-  const [appId, setAppId] = useState('blokus-custom');
+  const [authInstance, setAuthInstance] = useState(null);
+  const [appId] = useState('blokus-custom');
   
   const [roomId, setRoomId] = useState('');
   const [roomData, setRoomData] = useState(null);
   const [roomsList, setRoomsList] = useState([]);
   const [userName, setUserName] = useState('');
-  const [view, setView] = useState('login'); // 初始視圖改為 'login'
+  const [view, setView] = useState('login'); 
+
+  // 登入/註冊狀態
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [isProcessingAuth, setIsProcessingAuth] = useState(false);
 
   const [selectedPieceIndex, setSelectedPieceIndex] = useState(null);
   const [transform, setTransform] = useState({ rot: 0, flipX: false });
@@ -163,25 +175,29 @@ export default function App() {
   const [vibrationEnabled, setVibrationEnabled] = useState(false); 
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // 初始化 Firebase 與本地玩家名稱
+  // 初始化 Firebase
   useEffect(() => {
-    const savedName = localStorage.getItem('blokus_username');
-    if (savedName) setUserName(savedName);
-
     const initFirebase = async () => {
       try {
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const firestore = getFirestore(app);
+        
+        setAuthInstance(auth);
         setDb(firestore);
 
-        await signInAnonymously(auth);
-
-        onAuthStateChanged(auth, (u) => {
-          setUser(u);
-          if (u && !savedName) {
-            setUserName(`玩家_${u.uid.substring(0, 4)}`);
+        // 監聽登入狀態 (包含重新整理時的自動恢復)
+        onAuthStateChanged(auth, (currentUser) => {
+          if (currentUser) {
+            setUser(currentUser);
+            setUserName(currentUser.displayName || `玩家_${currentUser.uid.substring(0, 4)}`);
+            // 如果原本在 login 畫面，登入成功就跳轉到 home。若在其他畫面(如 game)則保留。
+            setView(prev => prev === 'login' ? 'home' : prev);
+          } else {
+            setUser(null);
+            setView('login'); // 沒有登入就強制回登入畫面
           }
+          setAuthReady(true);
         });
       } catch (err) {
         console.error("Firebase 初始化失敗:", err);
@@ -190,9 +206,53 @@ export default function App() {
     initFirebase();
   }, []);
 
+  // --- Auth 相關函數 ---
+  const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    if (!email.trim() || !password.trim()) return;
+    if (isRegisterMode && !userName.trim()) {
+      setAuthError('請填寫玩家姓名');
+      return;
+    }
+
+    setIsProcessingAuth(true);
+    setAuthError('');
+
+    try {
+      if (isRegisterMode) {
+        const cred = await createUserWithEmailAndPassword(authInstance, email, password);
+        await updateProfile(cred.user, { displayName: userName });
+        setUserName(userName);
+      } else {
+        await signInWithEmailAndPassword(authInstance, email, password);
+      }
+      // onAuthStateChanged 會自動處理畫面跳轉
+    } catch (err) {
+      console.error(err);
+      if (err.code === 'auth/email-already-in-use') setAuthError('此信箱已被註冊');
+      else if (err.code === 'auth/invalid-credential') setAuthError('信箱或密碼錯誤');
+      else if (err.code === 'auth/weak-password') setAuthError('密碼強度太弱 (至少 6 字元)');
+      else setAuthError('登入發生錯誤，請稍後再試');
+    } finally {
+      setIsProcessingAuth(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (window.confirm("確定要登出嗎？")) {
+      await signOut(authInstance);
+      setEmail('');
+      setPassword('');
+      setRoomId('');
+      setRoomData(null);
+    }
+  };
+
+  // --- 遊戲邏輯與監聽 ---
+
   // 監聽所有房間列表
   useEffect(() => {
-    if (!db || (view !== 'home' && view !== 'login')) return;
+    if (!db || !user || (view !== 'home' && view !== 'login')) return;
     const roomsRef = collection(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms');
     const unsubscribe = onSnapshot(roomsRef, (snapshot) => {
       const list = [];
@@ -204,7 +264,7 @@ export default function App() {
       setRoomsList(list);
     });
     return () => unsubscribe();
-  }, [db, view, appId]);
+  }, [db, view, appId, user]);
 
   // 監聽單一房間資料
   useEffect(() => {
@@ -242,9 +302,10 @@ export default function App() {
 
   // 自動跳過已投降的玩家回合
   useEffect(() => {
-    if (!roomData || roomData.status !== 'playing' || !db || !roomId) return;
+    if (!roomData || roomData.status !== 'playing' || !db || !roomId || !user) return;
     
-    if (roomData.host === user?.uid) {
+    // 使用 user.uid 判斷是否為房主
+    if (roomData.host === user.uid) {
       const currentSlot = roomData.currentTurn;
       if (roomData.surrendered && roomData.surrendered[currentSlot]) {
         const timer = setTimeout(async () => {
@@ -272,7 +333,6 @@ export default function App() {
   }, [roomData?.currentTurn]);
 
 
-  // 強制同步 (重新整理房間狀態)
   const handleForceSync = async () => {
     if (!db || !roomId) return;
     setIsSyncing(true);
@@ -289,18 +349,10 @@ export default function App() {
     } catch (err) {
       console.error("強制同步失敗:", err);
     } finally {
-      setTimeout(() => setIsSyncing(false), 800); // 確保旋轉動畫有足夠時間呈現
+      setTimeout(() => setIsSyncing(false), 800); 
     }
   };
 
-  // 登入操作
-  const handleLogin = () => {
-    if (!userName.trim()) return;
-    localStorage.setItem('blokus_username', userName.trim());
-    setView('home');
-  };
-
-  // 建立/加入房間
   const handleJoinOrCreate = async (targetRoomId) => {
     const idToUse = targetRoomId || roomId;
     if (!idToUse.trim() || !user) return;
@@ -314,7 +366,7 @@ export default function App() {
 
       const newRoom = {
         status: 'lobby',
-        host: user.uid,
+        host: user.uid, // 使用真正的帳號 UID
         slots: [null, null, null, null],
         board: JSON.stringify(initialBoard),
         currentTurn: 0,
@@ -507,47 +559,107 @@ export default function App() {
 
   // --- 畫面渲染 ---
 
-  if (!user || !db) {
-    return <div className="flex items-center justify-center h-screen bg-slate-900"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-500"></div></div>;
+  // 尚未完成 Firebase 狀態檢查前顯示載入中
+  if (!authReady) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen bg-slate-900 text-slate-300">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500 mb-4"></div>
+        <p>連線驗證中...</p>
+      </div>
+    );
   }
 
-  // 登入畫面
+  // 登入/註冊畫面
   if (view === 'login') {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 font-sans text-white">
         <div className="text-center mb-8">
           <h1 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 mb-2 tracking-tight">角鬥士棋 3D版</h1>
-          <p className="text-slate-400">登入並設定您的玩家角色</p>
+          <p className="text-slate-400">登入帳號以保存您的進度與身分</p>
         </div>
 
-        <div className="bg-slate-800 p-8 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-slate-700 max-w-sm w-full">
-          <div className="flex justify-center mb-6">
-            <div className="bg-slate-700 p-4 rounded-full text-indigo-400 border-2 border-slate-600">
-              <User size={48} />
-            </div>
-          </div>
-          <div className="space-y-6">
+        <form onSubmit={handleAuthSubmit} className="bg-slate-800 p-8 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-slate-700 max-w-sm w-full">
+          <h2 className="text-2xl font-bold mb-6 text-center text-slate-100">
+            {isRegisterMode ? '建立新帳號' : '登入遊戲'}
+          </h2>
+          
+          <div className="space-y-4">
+            {isRegisterMode && (
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1">玩家姓名</label>
+                <div className="relative">
+                  <User size={18} className="absolute left-3 top-3.5 text-slate-500" />
+                  <input 
+                    type="text" 
+                    value={userName} 
+                    onChange={(e) => setUserName(e.target.value)}
+                    className="w-full pl-10 pr-4 py-3 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition text-white"
+                    placeholder="輸入遊戲內顯示的名稱"
+                    maxLength={12}
+                  />
+                </div>
+              </div>
+            )}
+            
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2 text-center">請問該怎麼稱呼您？</label>
-              <input 
-                type="text" 
-                value={userName} 
-                onChange={(e) => setUserName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-                className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition text-center text-lg text-white"
-                placeholder="輸入玩家姓名"
-                maxLength={12}
-              />
+              <label className="block text-xs font-medium text-slate-400 mb-1">電子郵件 (Email)</label>
+              <div className="relative">
+                <Mail size={18} className="absolute left-3 top-3.5 text-slate-500" />
+                <input 
+                  type="email" 
+                  value={email} 
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition text-white"
+                  placeholder="name@example.com"
+                  required
+                />
+              </div>
             </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1">密碼</label>
+              <div className="relative">
+                <Lock size={18} className="absolute left-3 top-3.5 text-slate-500" />
+                <input 
+                  type="password" 
+                  value={password} 
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition text-white"
+                  placeholder="輸入 6 碼以上密碼"
+                  required
+                />
+              </div>
+            </div>
+
+            {authError && (
+              <div className="text-red-400 text-sm font-bold bg-red-500/10 p-3 rounded border border-red-500/30 text-center">
+                {authError}
+              </div>
+            )}
+
             <button 
-              onClick={handleLogin}
-              disabled={!userName.trim()}
-              className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold py-3 px-4 rounded-lg w-full transition disabled:opacity-50 disabled:cursor-not-allowed shadow-lg text-lg flex justify-center items-center gap-2"
+              type="submit"
+              disabled={isProcessingAuth}
+              className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold py-3 px-4 rounded-lg w-full transition disabled:opacity-50 disabled:cursor-not-allowed shadow-lg text-lg mt-2 flex justify-center"
             >
-              進入大廳
+              {isProcessingAuth ? <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></div> : (isRegisterMode ? '註冊並登入' : '登入')}
             </button>
           </div>
-        </div>
+
+          <div className="mt-6 text-center text-sm text-slate-400">
+            {isRegisterMode ? '已經有帳號了？' : '還沒有帳號嗎？'}
+            <button 
+              type="button"
+              onClick={() => {
+                setIsRegisterMode(!isRegisterMode);
+                setAuthError('');
+              }} 
+              className="text-indigo-400 hover:text-indigo-300 font-bold ml-1 transition"
+            >
+              {isRegisterMode ? '點此登入' : '點此註冊'}
+            </button>
+          </div>
+        </form>
       </div>
     );
   }
@@ -556,25 +668,25 @@ export default function App() {
   if (view === 'home') {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center py-6 px-4 font-sans text-white overflow-y-auto">
-        <div className="w-full max-w-4xl flex justify-between items-center mb-6 bg-slate-800 p-4 rounded-2xl border border-slate-700">
+        <div className="w-full max-w-4xl flex justify-between items-center mb-6 bg-slate-800 p-4 rounded-2xl border border-slate-700 shadow-[0_0_20px_rgba(0,0,0,0.3)]">
           <div className="flex items-center gap-3">
-            <div className="bg-indigo-500/20 p-2 rounded-full text-indigo-400">
+            <div className="bg-indigo-500/20 p-3 rounded-full text-indigo-400">
               <User size={24} />
             </div>
             <div>
-              <p className="text-xs text-slate-400">歡迎回來</p>
+              <p className="text-xs text-slate-400 font-mono">{user?.email}</p>
               <h2 className="text-xl font-bold text-slate-200">{userName}</h2>
             </div>
           </div>
           <button 
-            onClick={() => setView('login')}
-            className="text-xs flex items-center gap-1 bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg transition text-slate-300"
+            onClick={handleLogout}
+            className="text-xs flex items-center gap-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-900/50 px-4 py-2 rounded-lg transition font-bold"
           >
-            <Edit3 size={14} /> 更換姓名
+            <LogOut size={14} /> 登出帳號
           </button>
         </div>
 
-        <div className="text-center mb-6">
+        <div className="text-center mb-6 mt-4">
           <h1 className="text-4xl sm:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 tracking-tight">角鬥士棋 3D版</h1>
         </div>
 
@@ -672,7 +784,7 @@ export default function App() {
   }
 
   if (view === 'lobby' && roomData) {
-    const isHost = roomData.host === user.uid;
+    const isHost = roomData.host === user.uid; // 判斷房主改回 user.uid
     const allSlotsFilled = roomData.slots.every(s => s !== null);
 
     return (
@@ -708,7 +820,7 @@ export default function App() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
             {COLORS.map((color, idx) => {
               const slot = roomData.slots[idx];
-              const isMySlot = slot?.uid === user.uid;
+              const isMySlot = slot?.uid === user.uid; // 使用 user.uid 比對
               
               return (
                 <div key={idx} className={`p-3 rounded-xl border-2 flex justify-between items-center bg-slate-900/50 ${color.border}`}>
