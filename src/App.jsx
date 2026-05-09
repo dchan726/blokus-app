@@ -18,7 +18,7 @@ import {
 import { 
   RotateCw, FlipHorizontal, Check, Users, AlertCircle, Play, 
   SkipForward, LogOut, RotateCcw, Flag, Trash2, ShieldAlert,
-  Vibrate, VibrateOff, StopCircle, Trophy
+  Vibrate, VibrateOff, StopCircle, Trophy, User, RefreshCw, Edit3
 } from 'lucide-react';
 
 // --- 您專屬的 Firebase 設定 ---
@@ -153,7 +153,7 @@ export default function App() {
   const [roomData, setRoomData] = useState(null);
   const [roomsList, setRoomsList] = useState([]);
   const [userName, setUserName] = useState('');
-  const [view, setView] = useState('home');
+  const [view, setView] = useState('login'); // 初始視圖改為 'login'
 
   const [selectedPieceIndex, setSelectedPieceIndex] = useState(null);
   const [transform, setTransform] = useState({ rot: 0, flipX: false });
@@ -161,9 +161,13 @@ export default function App() {
   const [confirmSurrender, setConfirmSurrender] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [vibrationEnabled, setVibrationEnabled] = useState(false); 
+  const [isSyncing, setIsSyncing] = useState(false);
 
-  // 初始化 Firebase
+  // 初始化 Firebase 與本地玩家名稱
   useEffect(() => {
+    const savedName = localStorage.getItem('blokus_username');
+    if (savedName) setUserName(savedName);
+
     const initFirebase = async () => {
       try {
         const app = initializeApp(firebaseConfig);
@@ -175,7 +179,7 @@ export default function App() {
 
         onAuthStateChanged(auth, (u) => {
           setUser(u);
-          if (u && !userName) {
+          if (u && !savedName) {
             setUserName(`玩家_${u.uid.substring(0, 4)}`);
           }
         });
@@ -188,7 +192,7 @@ export default function App() {
 
   // 監聽所有房間列表
   useEffect(() => {
-    if (!db || view !== 'home') return;
+    if (!db || (view !== 'home' && view !== 'login')) return;
     const roomsRef = collection(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms');
     const unsubscribe = onSnapshot(roomsRef, (snapshot) => {
       const list = [];
@@ -204,7 +208,7 @@ export default function App() {
 
   // 監聽單一房間資料
   useEffect(() => {
-    if (!user || !db || !roomId || view === 'home') return;
+    if (!user || !db || !roomId || view === 'home' || view === 'login') return;
 
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
     const unsubscribe = onSnapshot(roomRef, (snapshot) => {
@@ -268,6 +272,34 @@ export default function App() {
   }, [roomData?.currentTurn]);
 
 
+  // 強制同步 (重新整理房間狀態)
+  const handleForceSync = async () => {
+    if (!db || !roomId) return;
+    setIsSyncing(true);
+    try {
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
+      const snapshot = await getDoc(roomRef);
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        if (data.board && typeof data.board === 'string') data.board = JSON.parse(data.board);
+        if (data.piecesLeft && typeof data.piecesLeft === 'string') data.piecesLeft = JSON.parse(data.piecesLeft);
+        if (!data.surrendered) data.surrendered = [false, false, false, false];
+        setRoomData(data);
+      }
+    } catch (err) {
+      console.error("強制同步失敗:", err);
+    } finally {
+      setTimeout(() => setIsSyncing(false), 800); // 確保旋轉動畫有足夠時間呈現
+    }
+  };
+
+  // 登入操作
+  const handleLogin = () => {
+    if (!userName.trim()) return;
+    localStorage.setItem('blokus_username', userName.trim());
+    setView('home');
+  };
+
   // 建立/加入房間
   const handleJoinOrCreate = async (targetRoomId) => {
     const idToUse = targetRoomId || roomId;
@@ -311,7 +343,6 @@ export default function App() {
     setRoomId('');
   };
 
-  // 房主解散並刪除房間
   const handleDeleteRoom = async () => {
     if (!roomData || roomData.host !== user?.uid || !db) return;
     if (!window.confirm("確定要解散並刪除這個房間嗎？所有玩家將會被踢出。")) return;
@@ -322,7 +353,6 @@ export default function App() {
     setRoomId('');
   };
 
-  // 重置/清除房間
   const handleRestartRoom = async () => {
     if (!roomData || roomData.host !== user?.uid || !db) return;
     const initialBoard = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(null));
@@ -340,7 +370,6 @@ export default function App() {
     });
   };
 
-  // 房主強制結束遊戲
   const handleForceEndGame = async () => {
     if (!roomData || roomData.host !== user?.uid) return;
     if (!window.confirm("確定要強制結束這場遊戲並進行結算嗎？")) return;
@@ -482,12 +511,71 @@ export default function App() {
     return <div className="flex items-center justify-center h-screen bg-slate-900"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-500"></div></div>;
   }
 
+  // 登入畫面
+  if (view === 'login') {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 font-sans text-white">
+        <div className="text-center mb-8">
+          <h1 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 mb-2 tracking-tight">角鬥士棋 3D版</h1>
+          <p className="text-slate-400">登入並設定您的玩家角色</p>
+        </div>
+
+        <div className="bg-slate-800 p-8 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-slate-700 max-w-sm w-full">
+          <div className="flex justify-center mb-6">
+            <div className="bg-slate-700 p-4 rounded-full text-indigo-400 border-2 border-slate-600">
+              <User size={48} />
+            </div>
+          </div>
+          <div className="space-y-6">
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2 text-center">請問該怎麼稱呼您？</label>
+              <input 
+                type="text" 
+                value={userName} 
+                onChange={(e) => setUserName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition text-center text-lg text-white"
+                placeholder="輸入玩家姓名"
+                maxLength={12}
+              />
+            </div>
+            <button 
+              onClick={handleLogin}
+              disabled={!userName.trim()}
+              className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold py-3 px-4 rounded-lg w-full transition disabled:opacity-50 disabled:cursor-not-allowed shadow-lg text-lg flex justify-center items-center gap-2"
+            >
+              進入大廳
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 首頁 (大廳選單)
   if (view === 'home') {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center py-6 px-4 font-sans text-white overflow-y-auto">
+        <div className="w-full max-w-4xl flex justify-between items-center mb-6 bg-slate-800 p-4 rounded-2xl border border-slate-700">
+          <div className="flex items-center gap-3">
+            <div className="bg-indigo-500/20 p-2 rounded-full text-indigo-400">
+              <User size={24} />
+            </div>
+            <div>
+              <p className="text-xs text-slate-400">歡迎回來</p>
+              <h2 className="text-xl font-bold text-slate-200">{userName}</h2>
+            </div>
+          </div>
+          <button 
+            onClick={() => setView('login')}
+            className="text-xs flex items-center gap-1 bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg transition text-slate-300"
+          >
+            <Edit3 size={14} /> 更換姓名
+          </button>
+        </div>
+
         <div className="text-center mb-6">
-          <h1 className="text-4xl sm:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 mb-1 tracking-tight">角鬥士棋 3D版</h1>
-          <p className="text-sm sm:text-base text-slate-400">多人線上連線對戰</p>
+          <h1 className="text-4xl sm:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 tracking-tight">角鬥士棋 3D版</h1>
         </div>
 
         <div className="w-full max-w-4xl grid md:grid-cols-2 gap-4">
@@ -495,29 +583,20 @@ export default function App() {
             <h2 className="text-xl font-bold mb-4 text-indigo-300">加入或創建房間</h2>
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">您的玩家名稱</label>
-                <input 
-                  type="text" 
-                  value={userName} 
-                  onChange={(e) => setUserName(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition text-sm text-white"
-                  placeholder="輸入您的名稱"
-                />
-              </div>
-              <div>
                 <label className="block text-xs font-medium text-slate-300 mb-1">輸入房間號碼</label>
                 <div className="flex gap-2">
                   <input 
                     type="text" 
                     value={roomId} 
                     onChange={(e) => setRoomId(e.target.value.toUpperCase())}
-                    className="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition font-mono uppercase text-white tracking-widest text-base"
+                    onKeyDown={(e) => e.key === 'Enter' && handleJoinOrCreate(roomId)}
+                    className="flex-1 px-3 py-3 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition font-mono uppercase text-white tracking-widest text-lg"
                     placeholder="例如: ROOM123"
                   />
                   <button 
                     onClick={() => handleJoinOrCreate(roomId)}
                     disabled={!roomId.trim() || !userName.trim()}
-                    className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold px-4 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md shrink-0 text-sm"
+                    className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold px-6 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md shrink-0 text-base"
                   >
                     進入
                   </button>
@@ -529,7 +608,9 @@ export default function App() {
           <div className="bg-slate-800 p-5 rounded-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)] border border-slate-700 flex flex-col h-[350px]">
             <div className="flex justify-between items-center mb-3">
               <h2 className="text-lg font-bold text-slate-200">公開房間列表</h2>
-              <div className="text-[10px] bg-slate-700 px-2 py-1 rounded text-slate-300">共 {roomsList.length} 個</div>
+              <div className="flex items-center gap-2">
+                <div className="text-[10px] bg-slate-700 px-2 py-1 rounded text-slate-300">共 {roomsList.length} 個</div>
+              </div>
             </div>
             
             <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-2">
@@ -550,8 +631,7 @@ export default function App() {
                     </div>
                     <button 
                       onClick={() => handleJoinOrCreate(room.id)}
-                      disabled={!userName.trim()}
-                      className="bg-slate-700 hover:bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition disabled:opacity-50"
+                      className="bg-slate-700 hover:bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition"
                     >
                       加入
                     </button>
@@ -599,7 +679,12 @@ export default function App() {
       <div className="min-h-screen bg-slate-900 flex flex-col items-center p-4 font-sans text-slate-100 overflow-y-auto">
         <div className="bg-slate-800 p-5 sm:p-6 rounded-2xl shadow-2xl max-w-xl w-full border border-slate-700">
           <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-3">
-            <h2 className="text-xl font-bold">遊戲大廳: <span className="font-mono text-indigo-400">{roomId}</span></h2>
+            <h2 className="text-xl font-bold flex items-center gap-3">
+              大廳: <span className="font-mono text-indigo-400">{roomId}</span>
+              <button onClick={handleForceSync} className="text-slate-400 hover:text-white transition bg-slate-700 p-1.5 rounded-md" title="重新整理連線">
+                <RefreshCw size={14} className={isSyncing ? "animate-spin text-indigo-400" : ""} />
+              </button>
+            </h2>
             
             {isHost ? (
               <button onClick={handleDeleteRoom} className="flex items-center gap-1 px-2 py-1.5 text-xs text-red-400 hover:bg-red-500/20 rounded-md transition border border-red-900/50">
@@ -720,11 +805,20 @@ export default function App() {
           .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
         `}} />
 
-        {/* 極簡化頂部導覽列 */}
+        {/* 頂部導覽列 */}
         <header className="bg-slate-800 p-1.5 sm:p-2 shadow-md flex justify-between items-center z-10 shrink-0 border-b border-slate-700">
           <div className="flex items-center gap-2">
             <h1 className="text-base font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 hidden sm:block ml-1">BLOKUS</h1>
             <div className="bg-slate-900 border border-slate-700 px-1.5 py-0.5 rounded text-[10px] sm:text-xs font-mono text-indigo-300">{roomId}</div>
+            
+            {/* 強制同步 (重新整理) 按鈕 */}
+            <button 
+              onClick={handleForceSync} 
+              className={`p-1.5 ml-1 rounded-lg transition text-slate-400 hover:text-white hover:bg-slate-700`} 
+              title="重新整理連線狀態"
+            >
+              <RefreshCw size={14} className={isSyncing ? "animate-spin text-indigo-400" : ""} />
+            </button>
           </div>
           
           <div className="flex items-center gap-1 sm:gap-2">
@@ -743,12 +837,12 @@ export default function App() {
             </button>
 
             {isHost && !isFinished && (
-              <button onClick={handleForceEndGame} className="p-1.5 text-yellow-500 hover:bg-slate-700 rounded-lg transition">
+              <button onClick={handleForceEndGame} className="p-1.5 text-yellow-500 hover:bg-slate-700 rounded-lg transition" title="強制結算遊戲">
                 <StopCircle size={14} />
               </button>
             )}
 
-            <button onClick={handleLeaveRoom} className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-lg transition">
+            <button onClick={handleLeaveRoom} className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-lg transition" title="離開房間">
               <LogOut size={14} />
             </button>
           </div>
@@ -756,7 +850,7 @@ export default function App() {
 
         <div className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
           
-          {/* 極簡化計分板 (微型 Chips) */}
+          {/* 微型計分板 */}
           <div className="bg-slate-800/90 p-1.5 flex lg:flex-col gap-1.5 overflow-x-auto lg:overflow-y-auto shrink-0 z-10 border-b lg:border-b-0 lg:border-r border-slate-700 shadow-sm lg:w-36 items-center lg:items-stretch">
             {COLORS.map((c, idx) => {
               const slot = roomData.slots[idx];
@@ -782,7 +876,7 @@ export default function App() {
             })}
           </div>
 
-          {/* 中央：棋盤與遊戲結束畫面 (獲得更多空間) */}
+          {/* 中央：棋盤與結算 */}
           <div className="flex-1 flex flex-col items-center justify-center p-1 sm:p-2 overflow-hidden relative">
             
             {isFinished && (
@@ -819,7 +913,7 @@ export default function App() {
               </div>
             )}
 
-            {/* 放大版的 3D 棋盤 */}
+            {/* 3D 棋盤 */}
             <div className="w-full max-w-[98vw] sm:max-w-[550px] lg:max-w-[700px] aspect-square relative select-none">
               <div 
                 className="w-full h-full bg-slate-900 rounded p-[2px] shadow-[0_10px_30px_rgba(0,0,0,0.8)] border border-slate-600"
@@ -894,7 +988,7 @@ export default function App() {
             </div>
           </div>
           
-          {/* 擴大的方塊選擇盤 */}
+          {/* 方塊選擇盤 */}
           <div className="h-[32vh] min-h-[200px] lg:h-auto lg:w-[320px] xl:w-[380px] bg-slate-800 p-2 sm:p-3 shadow-[0_-10px_20px_rgba(0,0,0,0.3)] flex flex-col z-20 shrink-0 border-t lg:border-t-0 lg:border-l border-slate-700">
             {!isFinished ? (
               isMyTurn ? (
