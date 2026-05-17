@@ -177,9 +177,6 @@ export default function App() {
   const [syncTrigger, setSyncTrigger] = useState(0); // 強制更新用的觸發器
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // 觸控拖曳用的狀態
-  const [isDragging, setIsDragging] = useState(false);
-
   // 初始化 Firebase
   useEffect(() => {
     const initFirebase = async () => {
@@ -496,49 +493,18 @@ export default function App() {
     return validateMove(roomData.board, currentColor, activePieceCoords, stagingPos.y, stagingPos.x);
   }, [stagingPos, roomData, activePieceCoords, currentColor, selectedPieceIndex]);
 
-  // --- 棋盤拖曳相關邏輯 ---
-  const updateStagingFromEvent = useCallback((clientX, clientY) => {
-    // 找出游標/手指當下位置的 DOM 元素
-    const element = document.elementFromPoint(clientX, clientY);
-    if (!element) return;
-    
-    // 往上找帶有 data-y 的元素 (即我們的格子)
-    const cell = element.closest('[data-y]');
-    if (cell) {
-      const y = parseInt(cell.dataset.y, 10);
-      const x = parseInt(cell.dataset.x, 10);
-      setStagingPos(prev => {
-        if (!prev || prev.y !== y || prev.x !== x) return { y, x };
-        return prev;
-      });
-    }
-  }, []);
-
-  // 處理按下 (支援點擊與拖曳起始)
-  const handlePointerDown = (e) => {
+  // --- 改為點擊選定位置，確保手機穩定運作 ---
+  const handleBoardClick = (y, x) => {
     if (!isMyTurn || selectedPieceIndex === null) return;
-    // 釋放 Pointer Capture，這樣手指移動時 elementFromPoint 才能抓到「底下」的元素，而不是一直抓到起始點
-    e.target.releasePointerCapture(e.pointerId);
-    setIsDragging(true);
-    updateStagingFromEvent(e.clientX, e.clientY);
+    setStagingPos({ y, x });
   };
 
-  // 處理移動 (拖曳中)
-  const handlePointerMove = (e) => {
-    if (!isMyTurn || selectedPieceIndex === null || !isDragging) return;
-    updateStagingFromEvent(e.clientX, e.clientY);
+  // 保留 MouseEnter 供電腦端滑鼠快速預覽
+  const handleBoardMouseEnter = (y, x) => {
+    if (isMyTurn && selectedPieceIndex !== null && window.matchMedia('(hover: hover)').matches) {
+      setStagingPos({ y, x });
+    }
   };
-
-  // 處理放開
-  const handlePointerUp = () => {
-    setIsDragging(false);
-  };
-
-  // 監聽全域的 pointerup 以防手指滑出棋盤外才放開
-  useEffect(() => {
-    window.addEventListener('pointerup', handlePointerUp);
-    return () => window.removeEventListener('pointerup', handlePointerUp);
-  }, []);
 
   const handleConfirmMove = async () => {
     if (!isMyTurn || !isMoveValid || !stagingPos || selectedPieceIndex === null || isProcessingAction) return;
@@ -566,11 +532,11 @@ export default function App() {
       });
     } catch(err) {
       console.error(err);
-      alert("放置失敗，請重試");
+      alert("放置失敗");
     } finally {
       setIsProcessingAction(false);
-      setStagingPos(null); // 放置後清除虛影
-      setSelectedPieceIndex(null); // 放置後取消選取狀態
+      setStagingPos(null);
+      setSelectedPieceIndex(null);
     }
   };
 
@@ -1101,16 +1067,11 @@ export default function App() {
               </div>
             )}
 
-            {/* 3D 棋盤 (加入了觸控拖曳支援) */}
+            {/* 3D 棋盤 (改回點擊模式確保手機穩定) */}
             <div className="w-full max-w-[98vw] sm:max-w-[550px] lg:max-w-[700px] aspect-square relative select-none">
               <div 
                 className="w-full h-full bg-slate-900 rounded p-[2px] shadow-[0_10px_30px_rgba(0,0,0,0.8)] border border-slate-600 cursor-crosshair"
                 onMouseLeave={() => setStagingPos(null)}
-                // 阻擋原生觸控滾動，讓所有滑動行為都留給我們的拖曳邏輯
-                style={{ touchAction: 'none' }}
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                // (全域的 pointerup 寫在 useEffect 中，避免滑出容器外放開收不到事件)
               >
                 <div 
                   className="w-full h-full grid gap-[1px]"
@@ -1129,16 +1090,16 @@ export default function App() {
                         }
                       }
 
-                      let cellClasses = "cell-empty pointer-events-none"; 
+                      let cellClasses = "cell-empty"; 
                       let innerElement = null;
                       
                       if (cellOwner !== null) {
-                        cellClasses = `piece-3d ${COLORS[cellOwner].bg} pointer-events-none`;
+                        cellClasses = `piece-3d ${COLORS[cellOwner].bg}`;
                       } else if (isHovered) {
                         if (hoverValid) {
-                          cellClasses = `piece-3d ${COLORS[currentColor].bg} opacity-80 scale-95 transition-transform pointer-events-none`;
+                          cellClasses = `piece-3d ${COLORS[currentColor].bg} opacity-80 scale-95 transition-transform`;
                         } else {
-                          cellClasses = `cell-invalid scale-110 pointer-events-none`;
+                          cellClasses = `cell-invalid scale-110`;
                         }
                       } else {
                         if (y === 0 && x === 0) innerElement = <div className="w-1/2 h-1/2 rounded-full bg-red-500/60 shadow-[0_0_8px_rgba(239,68,68,0.8)] animate-pulse" />;
@@ -1150,10 +1111,9 @@ export default function App() {
                       return (
                         <div 
                           key={`${y}-${x}`}
-                          // 將座標綁定在 DOM 上供 elementFromPoint 辨識
-                          data-y={y}
-                          data-x={x}
-                          className={`w-full h-full rounded-[1px] ${cellClasses} flex items-center justify-center`}
+                          className={`w-full h-full rounded-[1px] ${cellClasses} flex items-center justify-center cursor-pointer`}
+                          onClick={() => handleBoardClick(y, x)}
+                          onMouseEnter={() => handleBoardMouseEnter(y, x)}
                         >
                           {innerElement}
                         </div>
@@ -1177,7 +1137,7 @@ export default function App() {
               )}
             </div>
             
-            <p className="text-[10px] text-slate-500 mt-2 hidden sm:block">💡 提示：選擇方塊後，可以在棋盤上點擊或按住拖曳來尋找放置位置</p>
+            <p className="text-[10px] text-slate-500 mt-2">💡 提示：選擇方塊後，點擊棋盤任一位置來預覽與確認放置</p>
           </div>
           
           {/* 方塊選擇盤 */}
