@@ -1,4 +1,3 @@
-```react
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
@@ -1254,6 +1253,3 @@ export default function App() {
 
   return null;
 }
-
-
-```
