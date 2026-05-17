@@ -177,6 +177,9 @@ export default function App() {
   const [syncTrigger, setSyncTrigger] = useState(0); // 強制更新用的觸發器
   const [isSyncing, setIsSyncing] = useState(false);
 
+  // 觸控拖曳用的狀態
+  const [isDragging, setIsDragging] = useState(false);
+
   // 初始化 Firebase
   useEffect(() => {
     const initFirebase = async () => {
@@ -494,11 +497,12 @@ export default function App() {
   }, [stagingPos, roomData, activePieceCoords, currentColor, selectedPieceIndex]);
 
   // --- 棋盤拖曳相關邏輯 ---
-  const updateStagingFromPointer = useCallback((clientX, clientY) => {
+  const updateStagingFromEvent = useCallback((clientX, clientY) => {
+    // 找出游標/手指當下位置的 DOM 元素
     const element = document.elementFromPoint(clientX, clientY);
     if (!element) return;
     
-    // 找出包含 data-y 屬性的父層元素(即棋盤格子)
+    // 往上找帶有 data-y 的元素 (即我們的格子)
     const cell = element.closest('[data-y]');
     if (cell) {
       const y = parseInt(cell.dataset.y, 10);
@@ -510,19 +514,31 @@ export default function App() {
     }
   }, []);
 
-  const handleBoardPointerDown = (e) => {
+  // 處理按下 (支援點擊與拖曳起始)
+  const handlePointerDown = (e) => {
     if (!isMyTurn || selectedPieceIndex === null) return;
-    e.target.releasePointerCapture(e.pointerId); // 釋放捕捉以允許 elementFromPoint
-    updateStagingFromPointer(e.clientX, e.clientY);
+    // 釋放 Pointer Capture，這樣手指移動時 elementFromPoint 才能抓到「底下」的元素，而不是一直抓到起始點
+    e.target.releasePointerCapture(e.pointerId);
+    setIsDragging(true);
+    updateStagingFromEvent(e.clientX, e.clientY);
   };
 
-  const handleBoardPointerMove = (e) => {
-    if (!isMyTurn || selectedPieceIndex === null) return;
-    // 判斷是否有按壓拖曳
-    if (e.pointerType === 'mouse' && e.buttons !== 1) return; 
-    updateStagingFromPointer(e.clientX, e.clientY);
+  // 處理移動 (拖曳中)
+  const handlePointerMove = (e) => {
+    if (!isMyTurn || selectedPieceIndex === null || !isDragging) return;
+    updateStagingFromEvent(e.clientX, e.clientY);
   };
 
+  // 處理放開
+  const handlePointerUp = () => {
+    setIsDragging(false);
+  };
+
+  // 監聽全域的 pointerup 以防手指滑出棋盤外才放開
+  useEffect(() => {
+    window.addEventListener('pointerup', handlePointerUp);
+    return () => window.removeEventListener('pointerup', handlePointerUp);
+  }, []);
 
   const handleConfirmMove = async () => {
     if (!isMyTurn || !isMoveValid || !stagingPos || selectedPieceIndex === null || isProcessingAction) return;
@@ -550,9 +566,11 @@ export default function App() {
       });
     } catch(err) {
       console.error(err);
-      alert("放置失敗");
+      alert("放置失敗，請重試");
     } finally {
       setIsProcessingAction(false);
+      setStagingPos(null); // 放置後清除虛影
+      setSelectedPieceIndex(null); // 放置後取消選取狀態
     }
   };
 
@@ -1088,10 +1106,11 @@ export default function App() {
               <div 
                 className="w-full h-full bg-slate-900 rounded p-[2px] shadow-[0_10px_30px_rgba(0,0,0,0.8)] border border-slate-600 cursor-crosshair"
                 onMouseLeave={() => setStagingPos(null)}
-                // 加入觸控/滑鼠指標拖曳支援，並停用原生觸控滾動
+                // 阻擋原生觸控滾動，讓所有滑動行為都留給我們的拖曳邏輯
                 style={{ touchAction: 'none' }}
-                onPointerDown={handleBoardPointerDown}
-                onPointerMove={handleBoardPointerMove}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                // (全域的 pointerup 寫在 useEffect 中，避免滑出容器外放開收不到事件)
               >
                 <div 
                   className="w-full h-full grid gap-[1px]"
@@ -1131,7 +1150,7 @@ export default function App() {
                       return (
                         <div 
                           key={`${y}-${x}`}
-                          // 將座標綁定在 DOM 上供拖曳辨識
+                          // 將座標綁定在 DOM 上供 elementFromPoint 辨識
                           data-y={y}
                           data-x={x}
                           className={`w-full h-full rounded-[1px] ${cellClasses} flex items-center justify-center`}
@@ -1158,7 +1177,7 @@ export default function App() {
               )}
             </div>
             
-            <p className="text-[10px] text-slate-500 mt-2 hidden sm:block">💡 提示：選擇方塊後，可以在棋盤上按住並拖曳來尋找放置位置</p>
+            <p className="text-[10px] text-slate-500 mt-2 hidden sm:block">💡 提示：選擇方塊後，可以在棋盤上點擊或按住拖曳來尋找放置位置</p>
           </div>
           
           {/* 方塊選擇盤 */}
