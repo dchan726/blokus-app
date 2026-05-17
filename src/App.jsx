@@ -1,3 +1,4 @@
+```react
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
@@ -166,6 +167,7 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [isProcessingAuth, setIsProcessingAuth] = useState(false);
+  const [isProcessingAction, setIsProcessingAction] = useState(false); // 避免重複點擊
 
   const [selectedPieceIndex, setSelectedPieceIndex] = useState(null);
   const [transform, setTransform] = useState({ rot: 0, flipX: false });
@@ -173,6 +175,7 @@ export default function App() {
   const [confirmSurrender, setConfirmSurrender] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [vibrationEnabled, setVibrationEnabled] = useState(false); 
+  const [syncTrigger, setSyncTrigger] = useState(0); // 強制更新用的觸發器
   const [isSyncing, setIsSyncing] = useState(false);
 
   // 初始化 Firebase
@@ -186,16 +189,14 @@ export default function App() {
         setAuthInstance(auth);
         setDb(firestore);
 
-        // 監聽登入狀態 (包含重新整理時的自動恢復)
         onAuthStateChanged(auth, (currentUser) => {
           if (currentUser) {
             setUser(currentUser);
             setUserName(currentUser.displayName || `玩家_${currentUser.uid.substring(0, 4)}`);
-            // 如果原本在 login 畫面，登入成功就跳轉到 home。若在其他畫面(如 game)則保留。
             setView(prev => prev === 'login' ? 'home' : prev);
           } else {
             setUser(null);
-            setView('login'); // 沒有登入就強制回登入畫面
+            setView('login'); 
           }
           setAuthReady(true);
         });
@@ -226,7 +227,6 @@ export default function App() {
       } else {
         await signInWithEmailAndPassword(authInstance, email, password);
       }
-      // onAuthStateChanged 會自動處理畫面跳轉
     } catch (err) {
       console.error(err);
       if (err.code === 'auth/email-already-in-use') setAuthError('此信箱已被註冊');
@@ -266,7 +266,7 @@ export default function App() {
     return () => unsubscribe();
   }, [db, view, appId, user]);
 
-  // 監聽單一房間資料
+  // 監聽單一房間資料 (加上 syncTrigger 以強制重新連線)
   useEffect(() => {
     if (!user || !db || !roomId || view === 'home' || view === 'login') return;
 
@@ -287,7 +287,7 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, [user, db, roomId, view, appId]);
+  }, [user, db, roomId, view, appId, syncTrigger]);
 
   // 同步房間狀態到視圖
   useEffect(() => {
@@ -304,7 +304,6 @@ export default function App() {
   useEffect(() => {
     if (!roomData || roomData.status !== 'playing' || !db || !roomId || !user) return;
     
-    // 使用 user.uid 判斷是否為房主
     if (roomData.host === user.uid) {
       const currentSlot = roomData.currentTurn;
       if (roomData.surrendered && roomData.surrendered[currentSlot]) {
@@ -333,52 +332,47 @@ export default function App() {
   }, [roomData?.currentTurn]);
 
 
-  const handleForceSync = async () => {
-    if (!db || !roomId) return;
+  const handleForceSync = () => {
     setIsSyncing(true);
-    try {
-      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
-      const snapshot = await getDoc(roomRef);
-      if (snapshot.exists()) {
-        const data = snapshot.data();
-        if (data.board && typeof data.board === 'string') data.board = JSON.parse(data.board);
-        if (data.piecesLeft && typeof data.piecesLeft === 'string') data.piecesLeft = JSON.parse(data.piecesLeft);
-        if (!data.surrendered) data.surrendered = [false, false, false, false];
-        setRoomData(data);
-      }
-    } catch (err) {
-      console.error("強制同步失敗:", err);
-    } finally {
-      setTimeout(() => setIsSyncing(false), 800); 
-    }
+    setSyncTrigger(prev => prev + 1); // 改變 trigger 強制重新執行 onSnapshot
+    setTimeout(() => setIsSyncing(false), 800); 
   };
 
   const handleJoinOrCreate = async (targetRoomId) => {
-    const idToUse = targetRoomId || roomId;
-    if (!idToUse.trim() || !user) return;
-    
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', idToUse.toUpperCase());
-    const snapshot = await getDoc(roomRef);
+    if (isProcessingAction) return;
+    setIsProcessingAction(true);
+    try {
+      const idToUse = targetRoomId || roomId;
+      if (!idToUse.trim() || !user) throw new Error("無效的房間代碼或尚未登入");
+      
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', idToUse.toUpperCase());
+      const snapshot = await getDoc(roomRef);
 
-    if (!snapshot.exists()) {
-      const initialBoard = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(null));
-      const initialPieces = Array(4).fill().map(() => Array.from({ length: 21 }, (_, i) => i));
+      if (!snapshot.exists()) {
+        const initialBoard = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(null));
+        const initialPieces = Array(4).fill().map(() => Array.from({ length: 21 }, (_, i) => i));
 
-      const newRoom = {
-        status: 'lobby',
-        host: user.uid, // 使用真正的帳號 UID
-        slots: [null, null, null, null],
-        board: JSON.stringify(initialBoard),
-        currentTurn: 0,
-        piecesLeft: JSON.stringify(initialPieces),
-        passCount: 0,
-        surrendered: [false, false, false, false],
-        createdAt: Date.now()
-      };
-      await setDoc(roomRef, newRoom);
+        const newRoom = {
+          status: 'lobby',
+          host: user.uid,
+          slots: [null, null, null, null],
+          board: JSON.stringify(initialBoard),
+          currentTurn: 0,
+          piecesLeft: JSON.stringify(initialPieces),
+          passCount: 0,
+          surrendered: [false, false, false, false],
+          createdAt: Date.now()
+        };
+        await setDoc(roomRef, newRoom);
+      }
+      setRoomId(idToUse.toUpperCase());
+      setView('lobby');
+    } catch (error) {
+      console.error(error);
+      alert("加入房間失敗: " + error.message);
+    } finally {
+      setIsProcessingAction(false);
     }
-    setRoomId(idToUse.toUpperCase());
-    setView('lobby');
   };
 
   const handleAdminClearAll = async () => {
@@ -399,52 +393,72 @@ export default function App() {
     if (!roomData || roomData.host !== user?.uid || !db) return;
     if (!window.confirm("確定要解散並刪除這個房間嗎？所有玩家將會被踢出。")) return;
 
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
-    await deleteDoc(roomRef);
-    setView('home');
-    setRoomId('');
+    try {
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
+      await deleteDoc(roomRef);
+      setView('home');
+      setRoomId('');
+    } catch(err) {
+      alert("解散失敗");
+    }
   };
 
   const handleRestartRoom = async () => {
     if (!roomData || roomData.host !== user?.uid || !db) return;
-    const initialBoard = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(null));
-    const initialPieces = Array(4).fill().map(() => Array.from({ length: 21 }, (_, i) => i));
-    
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
-    await updateDoc(roomRef, {
-      status: 'lobby',
-      board: JSON.stringify(initialBoard),
-      currentTurn: 0,
-      piecesLeft: JSON.stringify(initialPieces),
-      passCount: 0,
-      surrendered: [false, false, false, false],
-      slots: [null, null, null, null] 
-    });
+    try {
+      const initialBoard = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(null));
+      const initialPieces = Array(4).fill().map(() => Array.from({ length: 21 }, (_, i) => i));
+      
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
+      await updateDoc(roomRef, {
+        status: 'lobby',
+        board: JSON.stringify(initialBoard),
+        currentTurn: 0,
+        piecesLeft: JSON.stringify(initialPieces),
+        passCount: 0,
+        surrendered: [false, false, false, false],
+        slots: [null, null, null, null] 
+      });
+    } catch(err) { alert("重置失敗"); }
   };
 
   const handleForceEndGame = async () => {
     if (!roomData || roomData.host !== user?.uid) return;
     if (!window.confirm("確定要強制結束這場遊戲並進行結算嗎？")) return;
-    
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
-    await updateDoc(roomRef, { status: 'finished' });
+    try {
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
+      await updateDoc(roomRef, { status: 'finished' });
+    } catch(err) {}
   };
 
   const handleClaimSlot = async (slotIndex) => {
-    if (!roomData || roomData.status !== 'lobby') return;
-    const newSlots = [...roomData.slots];
-    newSlots[slotIndex] = { uid: user.uid, name: userName };
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
-    await updateDoc(roomRef, { slots: newSlots });
+    if (!roomData || roomData.status !== 'lobby' || isProcessingAction) return;
+    setIsProcessingAction(true);
+    try {
+      const newSlots = [...roomData.slots];
+      newSlots[slotIndex] = { uid: user.uid, name: userName };
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
+      await updateDoc(roomRef, { slots: newSlots });
+    } catch(error) {
+      console.error(error);
+      alert("加入位置失敗，請重試");
+    } finally {
+      setIsProcessingAction(false);
+    }
   };
 
   const handleLeaveSlot = async (slotIndex) => {
-    if (!roomData || roomData.status !== 'lobby') return;
-    const newSlots = [...roomData.slots];
-    if (newSlots[slotIndex]?.uid === user.uid) {
-      newSlots[slotIndex] = null;
-      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
-      await updateDoc(roomRef, { slots: newSlots });
+    if (!roomData || roomData.status !== 'lobby' || isProcessingAction) return;
+    setIsProcessingAction(true);
+    try {
+      const newSlots = [...roomData.slots];
+      if (newSlots[slotIndex]?.uid === user.uid) {
+        newSlots[slotIndex] = null;
+        const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
+        await updateDoc(roomRef, { slots: newSlots });
+      }
+    } catch(err) {} finally {
+      setIsProcessingAction(false);
     }
   };
 
@@ -453,13 +467,15 @@ export default function App() {
       alert("請確保所有 4 個顏色都有玩家加入！");
       return;
     }
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
-    await updateDoc(roomRef, { 
-      status: 'playing',
-      currentTurn: 0,
-      passCount: 0,
-      surrendered: [false, false, false, false]
-    });
+    try {
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
+      await updateDoc(roomRef, { 
+        status: 'playing',
+        currentTurn: 0,
+        passCount: 0,
+        surrendered: [false, false, false, false]
+      });
+    } catch(err) { alert("開始遊戲失敗"); }
   };
 
   const isMyTurn = roomData && 
@@ -478,71 +494,110 @@ export default function App() {
     return validateMove(roomData.board, currentColor, activePieceCoords, stagingPos.y, stagingPos.x);
   }, [stagingPos, roomData, activePieceCoords, currentColor, selectedPieceIndex]);
 
-  const handleBoardClick = (y, x) => {
+  // --- 棋盤拖曳相關邏輯 ---
+  const updateStagingFromPointer = useCallback((clientX, clientY) => {
+    const element = document.elementFromPoint(clientX, clientY);
+    if (!element) return;
+    
+    // 找出包含 data-y 屬性的父層元素(即棋盤格子)
+    const cell = element.closest('[data-y]');
+    if (cell) {
+      const y = parseInt(cell.dataset.y, 10);
+      const x = parseInt(cell.dataset.x, 10);
+      setStagingPos(prev => {
+        if (!prev || prev.y !== y || prev.x !== x) return { y, x };
+        return prev;
+      });
+    }
+  }, []);
+
+  const handleBoardPointerDown = (e) => {
     if (!isMyTurn || selectedPieceIndex === null) return;
-    setStagingPos({ y, x });
+    e.target.releasePointerCapture(e.pointerId); // 釋放捕捉以允許 elementFromPoint
+    updateStagingFromPointer(e.clientX, e.clientY);
   };
 
-  const handleConfirmMove = async () => {
-    if (!isMyTurn || !isMoveValid || !stagingPos || selectedPieceIndex === null) return;
+  const handleBoardPointerMove = (e) => {
+    if (!isMyTurn || selectedPieceIndex === null) return;
+    // 判斷是否有按壓拖曳
+    if (e.pointerType === 'mouse' && e.buttons !== 1) return; 
+    updateStagingFromPointer(e.clientX, e.clientY);
+  };
 
+
+  const handleConfirmMove = async () => {
+    if (!isMyTurn || !isMoveValid || !stagingPos || selectedPieceIndex === null || isProcessingAction) return;
+    setIsProcessingAction(true);
+    
     if (vibrationEnabled && navigator.vibrate) {
       navigator.vibrate([40]); 
     }
 
-    const newBoard = roomData.board.map(row => [...row]);
-    activePieceCoords.forEach(([dy, dx]) => {
-      newBoard[stagingPos.y + dy][stagingPos.x + dx] = currentColor;
-    });
+    try {
+      const newBoard = roomData.board.map(row => [...row]);
+      activePieceCoords.forEach(([dy, dx]) => {
+        newBoard[stagingPos.y + dy][stagingPos.x + dx] = currentColor;
+      });
 
-    const newPiecesLeft = roomData.piecesLeft.map(arr => [...arr]);
-    newPiecesLeft[currentColor] = newPiecesLeft[currentColor].filter(idx => idx !== selectedPieceIndex);
+      const newPiecesLeft = roomData.piecesLeft.map(arr => [...arr]);
+      newPiecesLeft[currentColor] = newPiecesLeft[currentColor].filter(idx => idx !== selectedPieceIndex);
 
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
-    await updateDoc(roomRef, {
-      board: JSON.stringify(newBoard),
-      piecesLeft: JSON.stringify(newPiecesLeft),
-      currentTurn: (currentColor + 1) % 4,
-      passCount: 0
-    });
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
+      await updateDoc(roomRef, {
+        board: JSON.stringify(newBoard),
+        piecesLeft: JSON.stringify(newPiecesLeft),
+        currentTurn: (currentColor + 1) % 4,
+        passCount: 0
+      });
+    } catch(err) {
+      console.error(err);
+      alert("放置失敗");
+    } finally {
+      setIsProcessingAction(false);
+    }
   };
 
   const handlePassTurn = async () => {
-    if (!isMyTurn) return;
-    
-    const newPassCount = roomData.passCount + 1;
-    let nextStatus = roomData.status;
-    if (newPassCount >= 4) nextStatus = 'finished';
+    if (!isMyTurn || isProcessingAction) return;
+    setIsProcessingAction(true);
+    try {
+      const newPassCount = roomData.passCount + 1;
+      let nextStatus = roomData.status;
+      if (newPassCount >= 4) nextStatus = 'finished';
 
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
-    await updateDoc(roomRef, {
-      currentTurn: (currentColor + 1) % 4,
-      passCount: newPassCount,
-      status: nextStatus
-    });
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
+      await updateDoc(roomRef, {
+        currentTurn: (currentColor + 1) % 4,
+        passCount: newPassCount,
+        status: nextStatus
+      });
+    } catch(err) {} finally { setIsProcessingAction(false); }
   };
 
   const handleSurrender = async () => {
-    if (!isMyTurn) return;
+    if (!isMyTurn || isProcessingAction) return;
     if (!confirmSurrender) {
       setConfirmSurrender(true);
       return;
     }
     
-    const newSurrendered = roomData.surrendered ? [...roomData.surrendered] : [false, false, false, false];
-    newSurrendered[currentColor] = true;
-    
-    const newPassCount = roomData.passCount + 1;
-    let nextStatus = roomData.status;
-    if (newPassCount >= 4) nextStatus = 'finished';
+    setIsProcessingAction(true);
+    try {
+      const newSurrendered = roomData.surrendered ? [...roomData.surrendered] : [false, false, false, false];
+      newSurrendered[currentColor] = true;
+      
+      const newPassCount = roomData.passCount + 1;
+      let nextStatus = roomData.status;
+      if (newPassCount >= 4) nextStatus = 'finished';
 
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
-    await updateDoc(roomRef, {
-      surrendered: newSurrendered,
-      currentTurn: (currentColor + 1) % 4,
-      passCount: newPassCount,
-      status: nextStatus
-    });
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
+      await updateDoc(roomRef, {
+        surrendered: newSurrendered,
+        currentTurn: (currentColor + 1) % 4,
+        passCount: newPassCount,
+        status: nextStatus
+      });
+    } catch(err) {} finally { setIsProcessingAction(false); }
   };
 
   const calculateScores = useCallback(() => {
@@ -559,7 +614,6 @@ export default function App() {
 
   // --- 畫面渲染 ---
 
-  // 尚未完成 Firebase 狀態檢查前顯示載入中
   if (!authReady) {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-slate-900 text-slate-300">
@@ -707,10 +761,10 @@ export default function App() {
                   />
                   <button 
                     onClick={() => handleJoinOrCreate(roomId)}
-                    disabled={!roomId.trim() || !userName.trim()}
-                    className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold px-6 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md shrink-0 text-base"
+                    disabled={!roomId.trim() || !userName.trim() || isProcessingAction}
+                    className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold px-6 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md shrink-0 text-base flex items-center justify-center min-w-[80px]"
                   >
-                    進入
+                    {isProcessingAction ? <RefreshCw size={18} className="animate-spin" /> : '進入'}
                   </button>
                 </div>
               </div>
@@ -743,7 +797,8 @@ export default function App() {
                     </div>
                     <button 
                       onClick={() => handleJoinOrCreate(room.id)}
-                      className="bg-slate-700 hover:bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition"
+                      disabled={isProcessingAction}
+                      className="bg-slate-700 hover:bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition disabled:opacity-50"
                     >
                       加入
                     </button>
@@ -784,7 +839,7 @@ export default function App() {
   }
 
   if (view === 'lobby' && roomData) {
-    const isHost = roomData.host === user.uid; // 判斷房主改回 user.uid
+    const isHost = roomData.host === user.uid; 
     const allSlotsFilled = roomData.slots.every(s => s !== null);
 
     return (
@@ -820,7 +875,7 @@ export default function App() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
             {COLORS.map((color, idx) => {
               const slot = roomData.slots[idx];
-              const isMySlot = slot?.uid === user.uid; // 使用 user.uid 比對
+              const isMySlot = slot?.uid === user.uid; 
               
               return (
                 <div key={idx} className={`p-3 rounded-xl border-2 flex justify-between items-center bg-slate-900/50 ${color.border}`}>
@@ -833,15 +888,20 @@ export default function App() {
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-medium truncate max-w-[80px]">{slot.name}</span>
                       {isMySlot && (
-                        <button onClick={() => handleLeaveSlot(idx)} className="text-[10px] bg-red-500/20 text-red-400 hover:bg-red-500/40 px-2 py-1 rounded">退出</button>
+                        <button 
+                          onClick={() => handleLeaveSlot(idx)} 
+                          disabled={isProcessingAction}
+                          className="text-[10px] bg-red-500/20 text-red-400 hover:bg-red-500/40 px-2 py-1 rounded disabled:opacity-50"
+                        >退出</button>
                       )}
                     </div>
                   ) : (
                     <button 
                       onClick={() => handleClaimSlot(idx)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white transition piece-3d ${color.bg} hover:brightness-110 active:translate-y-px`}
+                      disabled={isProcessingAction}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white transition piece-3d ${color.bg} hover:brightness-110 active:translate-y-px disabled:opacity-50 disabled:grayscale`}
                     >
-                      加入 {color.name}
+                      {isProcessingAction ? '...' : `加入 ${color.name}`}
                     </button>
                   )}
                 </div>
@@ -854,7 +914,7 @@ export default function App() {
               <>
                 <button 
                   onClick={handleStartGame}
-                  disabled={!allSlotsFilled}
+                  disabled={!allSlotsFilled || isProcessingAction}
                   className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white font-bold py-2.5 px-6 rounded-full shadow-lg transition disabled:opacity-50 disabled:grayscale flex items-center gap-1.5 text-base w-full sm:w-auto justify-center piece-3d"
                 >
                   <Play fill="currentColor" size={16} />
@@ -923,11 +983,10 @@ export default function App() {
             <h1 className="text-base font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 hidden sm:block ml-1">BLOKUS</h1>
             <div className="bg-slate-900 border border-slate-700 px-1.5 py-0.5 rounded text-[10px] sm:text-xs font-mono text-indigo-300">{roomId}</div>
             
-            {/* 強制同步 (重新整理) 按鈕 */}
             <button 
               onClick={handleForceSync} 
               className={`p-1.5 ml-1 rounded-lg transition text-slate-400 hover:text-white hover:bg-slate-700`} 
-              title="重新整理連線狀態"
+              title="強制重新整理連線狀態"
             >
               <RefreshCw size={14} className={isSyncing ? "animate-spin text-indigo-400" : ""} />
             </button>
@@ -1025,11 +1084,15 @@ export default function App() {
               </div>
             )}
 
-            {/* 3D 棋盤 */}
+            {/* 3D 棋盤 (加入了觸控拖曳支援) */}
             <div className="w-full max-w-[98vw] sm:max-w-[550px] lg:max-w-[700px] aspect-square relative select-none">
               <div 
-                className="w-full h-full bg-slate-900 rounded p-[2px] shadow-[0_10px_30px_rgba(0,0,0,0.8)] border border-slate-600"
+                className="w-full h-full bg-slate-900 rounded p-[2px] shadow-[0_10px_30px_rgba(0,0,0,0.8)] border border-slate-600 cursor-crosshair"
                 onMouseLeave={() => setStagingPos(null)}
+                // 加入觸控/滑鼠指標拖曳支援，並停用原生觸控滾動
+                style={{ touchAction: 'none' }}
+                onPointerDown={handleBoardPointerDown}
+                onPointerMove={handleBoardPointerMove}
               >
                 <div 
                   className="w-full h-full grid gap-[1px]"
@@ -1048,16 +1111,16 @@ export default function App() {
                         }
                       }
 
-                      let cellClasses = "cell-empty"; 
+                      let cellClasses = "cell-empty pointer-events-none"; 
                       let innerElement = null;
                       
                       if (cellOwner !== null) {
-                        cellClasses = `piece-3d ${COLORS[cellOwner].bg}`;
+                        cellClasses = `piece-3d ${COLORS[cellOwner].bg} pointer-events-none`;
                       } else if (isHovered) {
                         if (hoverValid) {
-                          cellClasses = `piece-3d ${COLORS[currentColor].bg} opacity-70 scale-95 transition-transform`;
+                          cellClasses = `piece-3d ${COLORS[currentColor].bg} opacity-80 scale-95 transition-transform pointer-events-none`;
                         } else {
-                          cellClasses = `cell-invalid scale-110`;
+                          cellClasses = `cell-invalid scale-110 pointer-events-none`;
                         }
                       } else {
                         if (y === 0 && x === 0) innerElement = <div className="w-1/2 h-1/2 rounded-full bg-red-500/60 shadow-[0_0_8px_rgba(239,68,68,0.8)] animate-pulse" />;
@@ -1069,13 +1132,10 @@ export default function App() {
                       return (
                         <div 
                           key={`${y}-${x}`}
-                          className={`w-full h-full rounded-[1px] ${cellClasses} cursor-pointer flex items-center justify-center`}
-                          onClick={() => handleBoardClick(y, x)}
-                          onMouseEnter={() => {
-                            if (isMyTurn && selectedPieceIndex !== null && window.matchMedia('(hover: hover)').matches) {
-                              setStagingPos({y, x});
-                            }
-                          }}
+                          // 將座標綁定在 DOM 上供拖曳辨識
+                          data-y={y}
+                          data-x={x}
+                          className={`w-full h-full rounded-[1px] ${cellClasses} flex items-center justify-center`}
                         >
                           {innerElement}
                         </div>
@@ -1089,15 +1149,17 @@ export default function App() {
                 <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none w-full flex justify-center">
                   <button
                     onClick={handleConfirmMove}
-                    disabled={!isMoveValid}
+                    disabled={!isMoveValid || isProcessingAction}
                     className={`pointer-events-auto flex items-center gap-1.5 px-6 py-3 rounded-full font-black text-base shadow-[0_8px_20px_rgba(0,0,0,0.5)] transition-all ${isMoveValid ? 'bg-green-500 hover:bg-green-400 text-white scale-100 piece-3d' : 'opacity-0 scale-50'}`}
                   >
-                    <Check size={20} />
+                    {isProcessingAction ? <RefreshCw size={20} className="animate-spin" /> : <Check size={20} />}
                     確認放置
                   </button>
                 </div>
               )}
             </div>
+            
+            <p className="text-[10px] text-slate-500 mt-2 hidden sm:block">💡 提示：選擇方塊後，可以在棋盤上按住並拖曳來尋找放置位置</p>
           </div>
           
           {/* 方塊選擇盤 */}
@@ -1192,3 +1254,6 @@ export default function App() {
 
   return null;
 }
+
+
+```
