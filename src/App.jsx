@@ -117,6 +117,25 @@ function validateMove(board, playerIndex, pieceCoords, startY, startX) {
   return hasCornerTouch;
 }
 
+// 核心演算法：計算下一回合的玩家
+function advanceTurn(currentTurn, currentPassCount, surrenderedArray, isActionPass) {
+  let newPassCount = isActionPass ? currentPassCount + 1 : 0;
+  let nextTurn = (currentTurn + 1) % 4;
+  let skips = 0;
+
+  while (surrenderedArray[nextTurn] && skips < 4) {
+    newPassCount++;
+    nextTurn = (nextTurn + 1) % 4;
+    skips++;
+  }
+
+  return {
+    nextTurn,
+    newPassCount,
+    isFinished: newPassCount >= 4
+  };
+}
+
 const MiniPiece = ({ coords, colorClass, onClick, isSelected }) => {
   const maxY = Math.max(...coords.map(c => c[0]));
   const maxX = Math.max(...coords.map(c => c[1]));
@@ -166,15 +185,18 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [isProcessingAuth, setIsProcessingAuth] = useState(false);
-  const [isProcessingAction, setIsProcessingAction] = useState(false); // 避免重複點擊
+  const [isProcessingAction, setIsProcessingAction] = useState(false);
 
+  // 遊戲畫面狀態
   const [selectedPieceIndex, setSelectedPieceIndex] = useState(null);
   const [transform, setTransform] = useState({ rot: 0, flipX: false });
   const [stagingPos, setStagingPos] = useState(null);
   const [confirmSurrender, setConfirmSurrender] = useState(false);
+  const [viewColorIndex, setViewColorIndex] = useState(0);
+
   const [isAdmin, setIsAdmin] = useState(false);
   const [vibrationEnabled, setVibrationEnabled] = useState(false); 
-  const [syncTrigger, setSyncTrigger] = useState(0); // 強制更新用的觸發器
+  const [syncTrigger, setSyncTrigger] = useState(0); 
   const [isSyncing, setIsSyncing] = useState(false);
 
   // 初始化 Firebase
@@ -249,7 +271,6 @@ export default function App() {
 
   // --- 遊戲邏輯與監聽 ---
 
-  // 監聽所有房間列表
   useEffect(() => {
     if (!db || !user || (view !== 'home' && view !== 'login')) return;
     const roomsRef = collection(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms');
@@ -265,7 +286,6 @@ export default function App() {
     return () => unsubscribe();
   }, [db, view, appId, user]);
 
-  // 監聽單一房間資料 (加上 syncTrigger 以強制重新連線)
   useEffect(() => {
     if (!user || !db || !roomId || view === 'home' || view === 'login') return;
 
@@ -288,7 +308,6 @@ export default function App() {
     return () => unsubscribe();
   }, [user, db, roomId, view, appId, syncTrigger]);
 
-  // 同步房間狀態到視圖
   useEffect(() => {
     if (!roomData) return;
     if (roomData.status === 'lobby' && view === 'game') {
@@ -299,7 +318,23 @@ export default function App() {
     }
   }, [roomData?.status, view]);
 
-  // 自動跳過已投降的玩家回合
+  // 當「目前回合」改變時，自動切換觀看視角
+  useEffect(() => {
+    if (roomData?.currentTurn !== undefined) {
+      setViewColorIndex(roomData.currentTurn);
+    }
+    setStagingPos(null);
+    setConfirmSurrender(false);
+  }, [roomData?.currentTurn]);
+
+  // 當使用者手動切換觀看的顏色時，清除選取的方塊與預覽位置
+  useEffect(() => {
+    setSelectedPieceIndex(null);
+    setTransform({ rot: 0, flipX: false });
+    setStagingPos(null);
+  }, [viewColorIndex]);
+
+  // 【全新防呆】如果當前回合是已投降玩家，房主(Host)會自動跳過他
   useEffect(() => {
     if (!roomData || roomData.status !== 'playing' || !db || !roomId || !user) return;
     
@@ -307,34 +342,50 @@ export default function App() {
       const currentSlot = roomData.currentTurn;
       if (roomData.surrendered && roomData.surrendered[currentSlot]) {
         const timer = setTimeout(async () => {
-          const newPassCount = roomData.passCount + 1;
-          const nextStatus = newPassCount >= 4 ? 'finished' : 'playing';
-          
+          const { nextTurn, newPassCount, isFinished } = advanceTurn(currentSlot, roomData.passCount, roomData.surrendered, true);
           const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
           await updateDoc(roomRef, {
-            currentTurn: (currentSlot + 1) % 4,
+            currentTurn: nextTurn,
             passCount: newPassCount,
-            status: nextStatus
+            status: isFinished ? 'finished' : 'playing'
           });
-        }, 800);
+        }, 1500); 
         return () => clearTimeout(timer);
       }
     }
   }, [roomData?.currentTurn, roomData?.status, roomData?.surrendered, roomData?.host, user?.uid, db, roomId, appId]);
 
-  // 重置本地選擇狀態
-  useEffect(() => {
-    setSelectedPieceIndex(null);
-    setStagingPos(null);
-    setTransform({ rot: 0, flipX: false });
-    setConfirmSurrender(false);
-  }, [roomData?.currentTurn]);
-
-
-  const handleForceSync = () => {
+  // 強制重新整理並主動檢查是否卡死
+  const handleForceSync = async () => {
+    if (!db || !roomId) return;
     setIsSyncing(true);
-    setSyncTrigger(prev => prev + 1); // 改變 trigger 強制重新執行 onSnapshot
-    setTimeout(() => setIsSyncing(false), 800); 
+    try {
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
+      const snapshot = await getDoc(roomRef);
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        if (data.board && typeof data.board === 'string') data.board = JSON.parse(data.board);
+        if (data.piecesLeft && typeof data.piecesLeft === 'string') data.piecesLeft = JSON.parse(data.piecesLeft);
+        if (!data.surrendered) data.surrendered = [false, false, false, false];
+        
+        // 檢查如果卡在已投降的玩家，直接強制跳轉
+        if (data.status === 'playing' && data.surrendered[data.currentTurn]) {
+           const { nextTurn, newPassCount, isFinished } = advanceTurn(data.currentTurn, data.passCount, data.surrendered, true);
+           await updateDoc(roomRef, {
+             currentTurn: nextTurn,
+             passCount: newPassCount,
+             status: isFinished ? 'finished' : 'playing'
+           });
+        } else {
+           setRoomData(data);
+           setSyncTrigger(prev => prev + 1); // 觸發本地監聽更新
+        }
+      }
+    } catch (err) {
+      console.error("強制同步失敗:", err);
+    } finally {
+      setTimeout(() => setIsSyncing(false), 800); 
+    }
   };
 
   const handleJoinOrCreate = async (targetRoomId) => {
@@ -477,11 +528,15 @@ export default function App() {
     } catch(err) { alert("開始遊戲失敗"); }
   };
 
+  const currentColor = roomData?.currentTurn ?? 0;
   const isMyTurn = roomData && 
                    roomData.status === 'playing' && 
-                   roomData.slots[roomData.currentTurn]?.uid === user?.uid &&
-                   !(roomData.surrendered && roomData.surrendered[roomData.currentTurn]);
-  const currentColor = roomData?.currentTurn ?? 0;
+                   roomData.slots[currentColor]?.uid === user?.uid &&
+                   !(roomData.surrendered && roomData.surrendered[currentColor]);
+                   
+  const isViewingMyTurn = isMyTurn && viewColorIndex === currentColor;
+  // 檢查目前觀看的顏色是不是自己擁有的 (即使不是自己的回合)
+  const isViewingMyColor = roomData?.slots[viewColorIndex]?.uid === user?.uid;
 
   const activePieceCoords = useMemo(() => {
     if (selectedPieceIndex === null) return [];
@@ -493,21 +548,13 @@ export default function App() {
     return validateMove(roomData.board, currentColor, activePieceCoords, stagingPos.y, stagingPos.x);
   }, [stagingPos, roomData, activePieceCoords, currentColor, selectedPieceIndex]);
 
-  // --- 改為點擊選定位置，確保手機穩定運作 ---
   const handleBoardClick = (y, x) => {
-    if (!isMyTurn || selectedPieceIndex === null) return;
+    if (!isViewingMyTurn || selectedPieceIndex === null) return;
     setStagingPos({ y, x });
   };
 
-  // 保留 MouseEnter 供電腦端滑鼠快速預覽
-  const handleBoardMouseEnter = (y, x) => {
-    if (isMyTurn && selectedPieceIndex !== null && window.matchMedia('(hover: hover)').matches) {
-      setStagingPos({ y, x });
-    }
-  };
-
   const handleConfirmMove = async () => {
-    if (!isMyTurn || !isMoveValid || !stagingPos || selectedPieceIndex === null || isProcessingAction) return;
+    if (!isViewingMyTurn || !isMoveValid || !stagingPos || selectedPieceIndex === null || isProcessingAction) return;
     setIsProcessingAction(true);
     
     if (vibrationEnabled && navigator.vibrate) {
@@ -523,42 +570,47 @@ export default function App() {
       const newPiecesLeft = roomData.piecesLeft.map(arr => [...arr]);
       newPiecesLeft[currentColor] = newPiecesLeft[currentColor].filter(idx => idx !== selectedPieceIndex);
 
+      const { nextTurn, newPassCount, isFinished } = advanceTurn(currentColor, roomData.passCount, roomData.surrendered, false);
+
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
       await updateDoc(roomRef, {
         board: JSON.stringify(newBoard),
         piecesLeft: JSON.stringify(newPiecesLeft),
-        currentTurn: (currentColor + 1) % 4,
-        passCount: 0
+        currentTurn: nextTurn,
+        passCount: newPassCount,
+        status: isFinished ? 'finished' : 'playing'
       });
     } catch(err) {
       console.error(err);
-      alert("放置失敗");
+      alert("放置失敗，請確認網路連線");
     } finally {
       setIsProcessingAction(false);
       setStagingPos(null);
-      setSelectedPieceIndex(null);
     }
   };
 
   const handlePassTurn = async () => {
-    if (!isMyTurn || isProcessingAction) return;
+    if (!isViewingMyTurn || isProcessingAction) return;
     setIsProcessingAction(true);
     try {
-      const newPassCount = roomData.passCount + 1;
-      let nextStatus = roomData.status;
-      if (newPassCount >= 4) nextStatus = 'finished';
+      const { nextTurn, newPassCount, isFinished } = advanceTurn(currentColor, roomData.passCount, roomData.surrendered, true);
 
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
       await updateDoc(roomRef, {
-        currentTurn: (currentColor + 1) % 4,
+        currentTurn: nextTurn,
         passCount: newPassCount,
-        status: nextStatus
+        status: isFinished ? 'finished' : 'playing'
       });
-    } catch(err) {} finally { setIsProcessingAction(false); }
+    } catch(err) {
+      console.error(err);
+    } finally { 
+      setIsProcessingAction(false); 
+      setStagingPos(null);
+    }
   };
 
   const handleSurrender = async () => {
-    if (!isMyTurn || isProcessingAction) return;
+    if (!isViewingMyTurn || isProcessingAction) return;
     if (!confirmSurrender) {
       setConfirmSurrender(true);
       return;
@@ -569,18 +621,22 @@ export default function App() {
       const newSurrendered = roomData.surrendered ? [...roomData.surrendered] : [false, false, false, false];
       newSurrendered[currentColor] = true;
       
-      const newPassCount = roomData.passCount + 1;
-      let nextStatus = roomData.status;
-      if (newPassCount >= 4) nextStatus = 'finished';
+      const { nextTurn, newPassCount, isFinished } = advanceTurn(currentColor, roomData.passCount, newSurrendered, true);
 
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'blokus_rooms', roomId);
       await updateDoc(roomRef, {
         surrendered: newSurrendered,
-        currentTurn: (currentColor + 1) % 4,
+        currentTurn: nextTurn,
         passCount: newPassCount,
-        status: nextStatus
+        status: isFinished ? 'finished' : 'playing'
       });
-    } catch(err) {} finally { setIsProcessingAction(false); }
+    } catch(err) {
+      console.error(err);
+    } finally { 
+      setIsProcessingAction(false); 
+      setConfirmSurrender(false);
+      setStagingPos(null);
+    }
   };
 
   const calculateScores = useCallback(() => {
@@ -1008,12 +1064,20 @@ export default function App() {
           <div className="bg-slate-800/90 p-1.5 flex lg:flex-col gap-1.5 overflow-x-auto lg:overflow-y-auto shrink-0 z-10 border-b lg:border-b-0 lg:border-r border-slate-700 shadow-sm lg:w-36 items-center lg:items-stretch">
             {COLORS.map((c, idx) => {
               const slot = roomData.slots[idx];
-              const isActive = roomData.currentTurn === idx && !isFinished;
+              const isActiveTurn = roomData.currentTurn === idx && !isFinished;
               const hasSurrendered = roomData.surrendered && roomData.surrendered[idx];
+              const isBeingViewed = viewColorIndex === idx;
               
               return (
-                <div key={idx} className={`px-2 py-1 sm:p-2 rounded-lg border flex-shrink-0 flex lg:flex-col items-center lg:items-start gap-1 lg:gap-1.5 transition-all min-w-[100px] lg:w-full ${isActive ? `${c.border} bg-slate-700 shadow-[0_0_8px_rgba(255,255,255,0.15)]` : hasSurrendered ? 'border-slate-800 bg-slate-900 opacity-40 grayscale' : 'border-slate-700 bg-slate-900/50 opacity-80'}`}>
-                  
+                <div 
+                  key={idx} 
+                  onClick={() => setViewColorIndex(idx)}
+                  className={`px-2 py-1 sm:p-2 rounded-lg border flex-shrink-0 flex lg:flex-col items-center lg:items-start gap-1 lg:gap-1.5 transition-all min-w-[100px] lg:w-full cursor-pointer hover:brightness-110 ${
+                    isActiveTurn ? `${c.border} bg-slate-700 shadow-[0_0_8px_rgba(255,255,255,0.15)]` 
+                    : hasSurrendered ? 'border-slate-800 bg-slate-900 opacity-50 grayscale' 
+                    : 'border-slate-700 bg-slate-900/50 opacity-80 hover:bg-slate-800'
+                  } ${isBeingViewed ? 'ring-2 ring-indigo-400 ring-offset-1 ring-offset-slate-900' : ''}`}
+                >
                   <div className="flex items-center gap-1.5 w-full">
                     <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-[2px] ${c.bg} piece-3d shrink-0`}></div>
                     <span className={`font-bold text-[10px] sm:text-xs truncate w-full ${hasSurrendered ? 'line-through text-slate-500' : 'text-slate-300'}`}>{slot?.name || '無人'}</span>
@@ -1021,13 +1085,14 @@ export default function App() {
                   
                   <div className="flex gap-1.5 w-full text-[9px] sm:text-[10px] bg-slate-900/80 px-1 py-0.5 rounded text-slate-400 font-mono items-center justify-between lg:justify-start">
                     <span title="剩餘棋子數">剩:{roomData.piecesLeft[idx]?.length || 0}</span>
-                    <span title="目前扣分數" className={`${isActive ? 'text-yellow-400' : 'text-slate-500'}`}>分:-{currentScores[idx]}</span>
+                    <span title="目前扣分數" className={`${isActiveTurn ? 'text-yellow-400' : 'text-slate-500'}`}>分:-{currentScores[idx]}</span>
                   </div>
                   
                   {hasSurrendered && <div className="hidden lg:block text-[9px] text-red-500 font-bold w-full text-center mt-0.5">已投降</div>}
                 </div>
               );
             })}
+            <p className="text-[9px] text-slate-500 text-center w-full mt-1 hidden lg:block">👆 點擊可切換觀看</p>
           </div>
 
           {/* 中央：棋盤與結算 */}
@@ -1067,10 +1132,10 @@ export default function App() {
               </div>
             )}
 
-            {/* 3D 棋盤 (改回點擊模式確保手機穩定) */}
+            {/* 3D 棋盤 */}
             <div className="w-full max-w-[98vw] sm:max-w-[550px] lg:max-w-[700px] aspect-square relative select-none">
               <div 
-                className="w-full h-full bg-slate-900 rounded p-[2px] shadow-[0_10px_30px_rgba(0,0,0,0.8)] border border-slate-600 cursor-crosshair"
+                className="w-full h-full bg-slate-900 rounded p-[2px] shadow-[0_10px_30px_rgba(0,0,0,0.8)] border border-slate-600"
                 onMouseLeave={() => setStagingPos(null)}
               >
                 <div 
@@ -1082,7 +1147,7 @@ export default function App() {
                       let isHovered = false;
                       let hoverValid = false;
                       
-                      if (stagingPos && selectedPieceIndex !== null && isMyTurn) {
+                      if (stagingPos && selectedPieceIndex !== null && isViewingMyTurn) {
                         const isPart = activePieceCoords.some(([dy, dx]) => stagingPos.y + dy === y && stagingPos.x + dx === x);
                         if (isPart) {
                           isHovered = true;
@@ -1111,9 +1176,13 @@ export default function App() {
                       return (
                         <div 
                           key={`${y}-${x}`}
-                          className={`w-full h-full rounded-[1px] ${cellClasses} flex items-center justify-center cursor-pointer`}
                           onClick={() => handleBoardClick(y, x)}
-                          onMouseEnter={() => handleBoardMouseEnter(y, x)}
+                          onMouseEnter={() => {
+                            if (isViewingMyTurn && selectedPieceIndex !== null && window.matchMedia('(hover: hover)').matches) {
+                              setStagingPos({y, x});
+                            }
+                          }}
+                          className={`w-full h-full rounded-[1px] ${cellClasses} flex items-center justify-center cursor-pointer`}
                         >
                           {innerElement}
                         </div>
@@ -1122,107 +1191,152 @@ export default function App() {
                   )}
                 </div>
               </div>
-
-              {isMyTurn && stagingPos && selectedPieceIndex !== null && (
-                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none w-full flex justify-center">
-                  <button
-                    onClick={handleConfirmMove}
-                    disabled={!isMoveValid || isProcessingAction}
-                    className={`pointer-events-auto flex items-center gap-1.5 px-6 py-3 rounded-full font-black text-base shadow-[0_8px_20px_rgba(0,0,0,0.5)] transition-all ${isMoveValid ? 'bg-green-500 hover:bg-green-400 text-white scale-100 piece-3d' : 'opacity-0 scale-50'}`}
-                  >
-                    {isProcessingAction ? <RefreshCw size={20} className="animate-spin" /> : <Check size={20} />}
-                    確認放置
-                  </button>
-                </div>
-              )}
             </div>
             
-            <p className="text-[10px] text-slate-500 mt-2">💡 提示：選擇方塊後，點擊棋盤任一位置來預覽與確認放置</p>
+            <p className="text-[10px] text-slate-500 mt-2">💡 提示：點擊左側計分板可以隨時切換觀看自己的剩餘方塊。</p>
           </div>
           
-          {/* 方塊選擇盤 */}
-          <div className="h-[32vh] min-h-[200px] lg:h-auto lg:w-[320px] xl:w-[380px] bg-slate-800 p-2 sm:p-3 shadow-[0_-10px_20px_rgba(0,0,0,0.3)] flex flex-col z-20 shrink-0 border-t lg:border-t-0 lg:border-l border-slate-700">
-            {!isFinished ? (
-              isMyTurn ? (
-                <>
-                  <div className="flex justify-between items-center mb-1.5 shrink-0">
-                    <h3 className="font-bold text-xs sm:text-sm text-white flex items-center gap-1.5">
-                      <div className={`w-2.5 h-2.5 rounded-full ${COLORS[currentColor].bg} piece-3d`}></div>
-                      你的方塊
-                    </h3>
-                    <div className="flex gap-1.5">
-                      <button 
-                        onClick={handleSurrender}
-                        className={`text-[10px] sm:text-xs flex items-center gap-0.5 px-2 py-1 rounded border shadow-sm transition ${confirmSurrender ? 'bg-red-600 border-red-500 text-white font-bold animate-pulse' : 'bg-slate-800 border-red-900 text-red-400 hover:bg-slate-700'}`}
-                      >
-                        <Flag size={12} /> {confirmSurrender ? '確定?' : '投降'}
-                      </button>
-                      <button 
-                        onClick={handlePassTurn}
-                        className="text-[10px] sm:text-xs flex items-center gap-0.5 bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded border border-slate-600 shadow-sm transition"
-                      >
-                        <SkipForward size={12} /> 略過
-                      </button>
-                    </div>
-                  </div>
+          {/* 方塊選擇與控制盤 */}
+          <div className="h-[32vh] min-h-[210px] lg:h-auto lg:w-[320px] xl:w-[380px] bg-slate-800 p-2 sm:p-3 shadow-[0_-10px_20px_rgba(0,0,0,0.3)] flex flex-col z-20 shrink-0 border-t lg:border-t-0 lg:border-l border-slate-700 transition-all relative">
+            {!isFinished && (
+              <>
+                {/* 標題與狀態列 */}
+                <div className="flex justify-between items-center mb-2 shrink-0">
+                  <h3 className="font-bold text-xs sm:text-sm text-white flex items-center gap-1.5">
+                    <div className={`w-2.5 h-2.5 rounded-full ${COLORS[viewColorIndex].bg} piece-3d`}></div>
+                    {isViewingMyColor 
+                      ? (isMyTurn && viewColorIndex === currentColor ? '你的方塊' : '你的剩餘方塊') 
+                      : `${roomData.slots[viewColorIndex]?.name || '無人'} 的方塊`}
+                  </h3>
                   
-                  {/* 控制區 */}
-                  {selectedPieceIndex !== null && (
-                    <div className="flex justify-center gap-2 mb-1.5 shrink-0">
-                      <button 
-                        onClick={() => setTransform(prev => ({ ...prev, rot: (prev.rot + 1) % 4 }))}
-                        className="flex-1 flex flex-col items-center gap-0.5 bg-slate-900/50 hover:bg-slate-700 py-1.5 rounded-lg border border-slate-600 transition"
-                      >
-                        <RotateCw size={16} className="text-indigo-400" />
-                        <span className="text-[9px] text-slate-300">旋轉</span>
-                      </button>
-                      <button 
-                        onClick={() => setTransform(prev => ({ ...prev, flipX: !prev.flipX }))}
-                        className="flex-1 flex flex-col items-center gap-0.5 bg-slate-900/50 hover:bg-slate-700 py-1.5 rounded-lg border border-slate-600 transition"
-                      >
-                        <FlipHorizontal size={16} className="text-purple-400" />
-                        <span className="text-[9px] text-slate-300">翻轉</span>
-                      </button>
-                    </div>
-                  )}
+                  <div className="flex gap-1.5 items-center">
+                    {/* 觀看限制標籤 */}
+                    {!isViewingMyColor && (
+                      <span className="text-[10px] text-red-300 bg-red-900/30 px-2 py-0.5 rounded border border-red-800/50 flex items-center gap-1">
+                        <Lock size={10} /> 隱藏中
+                      </span>
+                    )}
 
-                  {/* 棋子庫 */}
-                  <div className="flex-1 overflow-y-auto custom-scrollbar p-1.5 bg-slate-900/30 rounded-lg border border-slate-700/50">
-                    <div className="flex flex-wrap gap-1.5 sm:gap-2 justify-center lg:justify-start">
-                      {roomData.piecesLeft[currentColor].map((pieceIdx) => (
-                        <MiniPiece 
-                          key={pieceIdx}
-                          coords={pieceIdx === selectedPieceIndex ? activePieceCoords : INITIAL_PIECES[pieceIdx]}
-                          colorClass={COLORS[currentColor].bg}
-                          isSelected={selectedPieceIndex === pieceIdx}
-                          onClick={() => {
-                            if (selectedPieceIndex === pieceIdx) {
-                              setSelectedPieceIndex(null);
-                              setStagingPos(null);
-                            } else {
-                              setSelectedPieceIndex(pieceIdx);
-                              setTransform({ rot: 0, flipX: false });
-                              setStagingPos(null);
-                            }
-                          }}
-                        />
-                      ))}
-                      {roomData.piecesLeft[currentColor].length === 0 && (
-                        <div className="text-center text-slate-400 mt-4 w-full text-xs">你已用完所有棋子！</div>
-                      )}
-                    </div>
+                    {/* 等待自己輪次 */}
+                    {!isMyTurn && isViewingMyColor && viewColorIndex === currentColor && (
+                      <div className="flex items-center gap-1 text-[10px] text-yellow-500 bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-600/30">
+                        <RefreshCw size={10} className="animate-spin" />
+                        思考中...
+                      </div>
+                    )}
+
+                    {/* 自己的操作按鈕 */}
+                    {isViewingMyTurn && (
+                      <>
+                        <button 
+                          onClick={handleSurrender}
+                          disabled={isProcessingAction}
+                          className={`text-[10px] sm:text-xs flex items-center gap-0.5 px-2 py-1 rounded border shadow-sm transition disabled:opacity-50 ${confirmSurrender ? 'bg-red-600 border-red-500 text-white font-bold animate-pulse' : 'bg-slate-800 border-red-900 text-red-400 hover:bg-slate-700'}`}
+                        >
+                          <Flag size={12} /> {confirmSurrender ? '確定?' : '投降'}
+                        </button>
+                        <button 
+                          onClick={handlePassTurn}
+                          disabled={isProcessingAction}
+                          className="text-[10px] sm:text-xs flex items-center gap-0.5 bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded border border-slate-600 shadow-sm transition disabled:opacity-50"
+                        >
+                          <SkipForward size={12} /> 略過
+                        </button>
+                      </>
+                    )}
                   </div>
-                </>
-              ) : (
-                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 text-center p-2">
-                  <div className="relative mb-3">
-                    <div className={`absolute inset-0 rounded-full blur-lg opacity-40 ${COLORS[roomData.currentTurn].bg}`}></div>
-                    <div className="animate-spin relative rounded-full h-8 w-8 border-t-2 border-b-2 border-white"></div>
-                  </div>
-                  <span className="text-xs font-bold">等待 {roomData.slots[roomData.currentTurn]?.name} 下棋...</span>
                 </div>
-              )
-            ) : null}
+                
+                {/* 顯示內容區 (只有點擊自己的顏色才顯示方塊) */}
+                {isViewingMyColor ? (
+                  <>
+                    {/* 旋轉、翻轉與【全新確認放置按鈕】整合區 */}
+                    {selectedPieceIndex !== null && (
+                      <div className="flex justify-center gap-1.5 sm:gap-2 mb-2 shrink-0 h-[36px] sm:h-[40px]">
+                        <button 
+                          onClick={() => setTransform(prev => ({ ...prev, rot: (prev.rot + 1) % 4 }))}
+                          className="flex-1 flex items-center justify-center gap-1 bg-slate-900/50 hover:bg-slate-700 rounded-lg border border-slate-600 transition"
+                        >
+                          <RotateCw size={14} className="text-indigo-400" />
+                          <span className="text-[10px] sm:text-xs text-slate-300">旋轉</span>
+                        </button>
+                        <button 
+                          onClick={() => setTransform(prev => ({ ...prev, flipX: !prev.flipX }))}
+                          className="flex-1 flex items-center justify-center gap-1 bg-slate-900/50 hover:bg-slate-700 rounded-lg border border-slate-600 transition"
+                        >
+                          <FlipHorizontal size={14} className="text-purple-400" />
+                          <span className="text-[10px] sm:text-xs text-slate-300">翻轉</span>
+                        </button>
+                        
+                        {/* 只有在操作自己的方塊時才顯示確認按鈕 */}
+                        {isViewingMyTurn && (
+                          <button
+                            onClick={handleConfirmMove}
+                            disabled={!isMoveValid || !stagingPos || isProcessingAction}
+                            className={`flex-[2] flex items-center justify-center gap-1.5 rounded-lg font-bold text-[11px] sm:text-sm transition-all ${
+                              isMoveValid && stagingPos 
+                                ? 'bg-green-500 hover:bg-green-400 text-white shadow-[0_2px_10px_rgba(34,197,94,0.4)] piece-3d' 
+                                : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                            }`}
+                          >
+                            {isProcessingAction ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
+                            {isMoveValid && stagingPos ? '確認放置' : '請在棋盤上選位'}
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 棋子庫 */}
+                    <div className="flex-1 overflow-y-auto custom-scrollbar p-1.5 bg-slate-900/30 rounded-lg border border-slate-700/50">
+                      <div className="flex flex-wrap gap-1.5 sm:gap-2 justify-center lg:justify-start">
+                        {roomData.piecesLeft[viewColorIndex].map((pieceIdx) => (
+                          <MiniPiece 
+                            key={pieceIdx}
+                            coords={pieceIdx === selectedPieceIndex ? activePieceCoords : INITIAL_PIECES[pieceIdx]}
+                            colorClass={COLORS[viewColorIndex].bg}
+                            isSelected={selectedPieceIndex === pieceIdx}
+                            onClick={() => {
+                              if (selectedPieceIndex === pieceIdx) {
+                                setSelectedPieceIndex(null);
+                                setStagingPos(null);
+                              } else {
+                                setSelectedPieceIndex(pieceIdx);
+                                setTransform({ rot: 0, flipX: false });
+                                setStagingPos(null);
+                              }
+                            }}
+                          />
+                        ))}
+                        {roomData.piecesLeft[viewColorIndex].length === 0 && (
+                          <div className="text-center text-slate-500 mt-4 w-full text-xs font-bold">
+                            {isViewingMyTurn ? '你已用完所有方塊！' : '已無可用方塊'}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  /* 觀看對手時顯示隱藏鎖頭 */
+                  <div className="flex-1 flex flex-col items-center justify-center bg-slate-900/30 rounded-lg border border-slate-700/50 p-4 text-slate-400 text-center gap-3">
+                    {viewColorIndex === currentColor ? (
+                      <>
+                        <div className="relative">
+                          <div className={`absolute inset-0 rounded-full blur-lg opacity-40 ${COLORS[viewColorIndex].bg}`}></div>
+                          <div className="animate-spin relative rounded-full h-8 w-8 border-t-2 border-b-2 border-white"></div>
+                        </div>
+                        <span className="text-xs font-bold">等待 {roomData.slots[viewColorIndex]?.name} 下棋...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Lock size={28} className="text-slate-600 mb-1" />
+                        <span className="text-xs font-bold text-slate-500">不可查看對手的剩餘方塊</span>
+                        <span className="text-[10px] text-slate-600">請點擊左側計分板切換回自己的顏色</span>
+                      </>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
         </div>
